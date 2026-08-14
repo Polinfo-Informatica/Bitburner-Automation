@@ -15,7 +15,10 @@ export default [
         rules: {
             "no-empty": ["error", { allowEmptyCatch: false }],
             "no-constant-condition": ["error", { checkLoops: true }],
-            "no-unused-vars": ["warn", { argsIgnorePattern: "^_", varsIgnorePattern: "^_" }],
+            "no-unused-vars": [
+                "warn",
+                { argsIgnorePattern: "^_", varsIgnorePattern: "^_" },
+            ],
         },
     },
     prettierRecommended,

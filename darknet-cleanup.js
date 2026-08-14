@@ -136,7 +136,9 @@ export async function main(ns) {
             " | unavailable=" +
             offlineOrUnavailable +
             " | reports removed=" +
-            reportsRemoved,
+            reportsRemoved
     );
-    ns.tprint("[DNET CLEANUP] Done. You can now run darknet-manager.js v1.0.5.");
+    ns.tprint(
+        "[DNET CLEANUP] Done. You can now run darknet-manager.js v1.0.5."
+    );
 }

@@ -11,12 +11,12 @@
         "check": "npm run syntax && npm run ram-collisions && npm run typecheck && npm run lint && npm run format:check"
     },
     "devDependencies": {
-        "@eslint/js": "latest",
-        "eslint": "latest",
-        "eslint-config-prettier": "latest",
-        "eslint-plugin-prettier": "latest",
-        "globals": "latest",
-        "prettier": "latest",
-        "typescript": "latest"
+        "@eslint/js": "10.0.1",
+        "eslint": "10.8.1",
+        "eslint-config-prettier": "10.1.8",
+        "eslint-plugin-prettier": "5.5.6",
+        "globals": "17.11.0",
+        "prettier": "3.9.6",
+        "typescript": "7.0.2"
     }
 }

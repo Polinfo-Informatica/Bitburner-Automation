@@ -24,7 +24,7 @@ export async function main(ns) {
     } catch {
         // Intentionally ignored: this operation is best-effort.
     }
-    const VERSION = "1.0.6";
+    const VERSION = "1.0.7";
 
     const AGENT = "/Temp/dnet-agent.js";
     const PHISH = "/Temp/dnet-phish.js";
@@ -256,7 +256,7 @@ export async function main(ns) {
 
     const host = ns.getHostname();
     const selfPassword = String(ns.args[0] ?? "");
-    const AGENT_VERSION = "1.0.6";
+    const AGENT_VERSION = "1.0.7";
     const REPORT_INTERVAL = 15000;
     const LOOT_INTERVAL = 60000;
     const LOOP_INTERVAL = 4000;
@@ -1170,7 +1170,11 @@ export async function main(ns) {
         await ns.write(STASIS, STASIS_SOURCE, "w");
         await ns.write(LOOT, LOOT_SOURCE, "w");
         if (!ns.fileExists(PLAN, "home"))
-            await ns.write(PLAN, JSON.stringify({ desired: [], ts: Date.now() }), "w");
+            await ns.write(
+                PLAN,
+                JSON.stringify({ desired: [], ts: Date.now() }),
+                "w"
+            );
         if (!ns.fileExists(DB_FILE, "home")) await ns.write(DB_FILE, "{}", "w");
     }
 
@@ -1244,7 +1248,8 @@ export async function main(ns) {
             }
             if (r && Array.isArray(r.found)) {
                 for (const f of r.found) {
-                    if (!f || !f.host || typeof f.password !== "string") continue;
+                    if (!f || !f.host || typeof f.password !== "string")
+                        continue;
                     const old = db[f.host];
                     if (
                         !old ||
@@ -1256,7 +1261,9 @@ export async function main(ns) {
                             lastSeen: Number(f.ts || Date.now()),
                             maxRam: old ? Number(old.maxRam || 0) : 0,
                             depth: old ? Number(old.depth ?? -1) : -1,
-                            modelId: String(f.modelId || (old ? old.modelId || "" : "")),
+                            modelId: String(
+                                f.modelId || (old ? old.modelId || "" : "")
+                            ),
                         };
                         changed = true;
                     }
@@ -1271,7 +1278,11 @@ export async function main(ns) {
             const running = ns.ps("darkweb").find(function (p) {
                 return p.filename === AGENT;
             });
-            if (running && String((running.args && running.args[1]) || "") === VERSION) return true;
+            if (
+                running &&
+                String((running.args && running.args[1]) || "") === VERSION
+            )
+                return true;
             if (running) {
                 try {
                     ns.kill(running.pid);
@@ -1306,10 +1317,14 @@ export async function main(ns) {
                     DB_FILE,
                 ],
                 "darkweb",
-                "home",
+                "home"
             );
             const pid = ns.exec(AGENT, "darkweb", 1, "", VERSION);
-            if (pid) log("Seeded recursive crawler on darkweb (PID " + pid + ").", false);
+            if (pid)
+                log(
+                    "Seeded recursive crawler on darkweb (PID " + pid + ").",
+                    false
+                );
             return pid !== 0;
         } catch {
             return false;
@@ -1338,22 +1353,27 @@ export async function main(ns) {
         const now = Date.now();
         const latest = new Map();
         for (const r of reports) {
-            if (!r || !r.host || r.host === "darkweb" || r.isStationary) continue;
+            if (!r || !r.host || r.host === "darkweb" || r.isStationary)
+                continue;
             if (now - Number(r.ts || 0) > REPORT_FRESH_MS) continue;
             const old = latest.get(r.host);
-            if (!old || Number(r.ts || 0) > Number(old.ts || 0)) latest.set(r.host, r);
+            if (!old || Number(r.ts || 0) > Number(old.ts || 0))
+                latest.set(r.host, r);
         }
 
         const candidates = Array.from(latest.values()).sort(function (a, b) {
             const ram = Number(b.maxRam || 0) - Number(a.maxRam || 0);
             if (ram !== 0) return ram;
-            const blocked = Number(a.blockedRam || 0) - Number(b.blockedRam || 0);
+            const blocked =
+                Number(a.blockedRam || 0) - Number(b.blockedRam || 0);
             if (blocked !== 0) return blocked;
             return Number(b.depth || -1) - Number(a.depth || -1);
         });
-        const desired = candidates.slice(0, Math.max(0, limit)).map(function (r) {
-            return r.host;
-        });
+        const desired = candidates
+            .slice(0, Math.max(0, limit))
+            .map(function (r) {
+                return r.host;
+            });
 
         let previous = { desired: [], ts: 0 };
         try {
@@ -1362,12 +1382,18 @@ export async function main(ns) {
         } catch {
             // Intentionally ignored: this operation is best-effort.
         }
-        const oldDesired = Array.isArray(previous.desired) ? previous.desired : [];
+        const oldDesired = Array.isArray(previous.desired)
+            ? previous.desired
+            : [];
         const changed = JSON.stringify(oldDesired) !== JSON.stringify(desired);
         const needsRepush = now - Number(previous.ts || 0) >= STASIS_REPUSH_MS;
         if (!changed && !needsRepush) return;
 
-        await ns.write(PLAN, JSON.stringify({ desired: desired, ts: now }), "w");
+        await ns.write(
+            PLAN,
+            JSON.stringify({ desired: desired, ts: now }),
+            "w"
+        );
         let linked = [];
         try {
             linked = ns.dnet.getStasisLinkedServers(false);
@@ -1392,9 +1418,11 @@ export async function main(ns) {
         const now = Date.now();
         const latest = new Map();
         for (const r of reports) {
-            if (!r || !r.host || now - Number(r.ts || 0) > REPORT_FRESH_MS) continue;
+            if (!r || !r.host || now - Number(r.ts || 0) > REPORT_FRESH_MS)
+                continue;
             const old = latest.get(r.host);
-            if (!old || Number(r.ts || 0) > Number(old.ts || 0)) latest.set(r.host, r);
+            if (!old || Number(r.ts || 0) > Number(old.ts || 0))
+                latest.set(r.host, r);
         }
         const list = Array.from(latest.values());
         const totalRam = list.reduce(function (sum, r) {
@@ -1424,7 +1452,7 @@ export async function main(ns) {
                 " [" +
                 linked.join(", ") +
                 "]",
-            false,
+            false
         );
     }
 
@@ -1432,8 +1460,16 @@ export async function main(ns) {
     const agentRam = ns.getScriptRam(AGENT, "home");
     const db = loadDb();
     log("Dark Net manager started. Persistent credential DB: " + DB_FILE, true);
-    log("Generated crawler/RAM/loot/phishing/stasis workers automatically under /Temp.", true);
-    log("Generated crawler RAM: " + ns.format.ram(agentRam) + " (darkweb capacity: 16 GB).", true);
+    log(
+        "Generated crawler/RAM/loot/phishing/stasis workers automatically under /Temp.",
+        true
+    );
+    log(
+        "Generated crawler RAM: " +
+            ns.format.ram(agentRam) +
+            " (darkweb capacity: 16 GB).",
+        true
+    );
     try {
         const dwMax = ns.getServerMaxRam("darkweb");
         const dwUsed = ns.getServerUsedRam("darkweb");
@@ -1445,7 +1481,7 @@ export async function main(ns) {
                 " | free=" +
                 ns.format.ram(Math.max(0, dwMax - dwUsed)) +
                 ".",
-            true,
+            true
         );
     } catch {
         // Intentionally ignored: this operation is best-effort.
@@ -1454,7 +1490,7 @@ export async function main(ns) {
     if (!(agentRam > 0) || agentRam > 16) {
         log(
             "ERROR: generated crawler exceeds the 16 GB darkweb gateway limit; refusing to retry-loop.",
-            true,
+            true
         );
         return;
     }
@@ -1477,7 +1513,7 @@ export async function main(ns) {
                 if (!warnedNoDnet) {
                     log(
                         "Dark Net API unavailable. Buy TOR + DarkscapeNavigator.exe; retrying automatically.",
-                        true,
+                        true
                     );
                     warnedNoDnet = true;
                 }
