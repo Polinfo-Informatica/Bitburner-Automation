@@ -23,7 +23,7 @@ for (const { pattern, message } of forbiddenPatterns) {
 }
 
 const agentMatch = source.match(
-    /const AGENT_SOURCE = String\.raw`([\s\S]*?)`;\r?\n\r?\n    function log\(/,
+    /const AGENT_SOURCE = String\.raw`([\s\S]*?)`;\r?\n\r?\n {4}function log\(/,
 );
 if (!agentMatch) {
     console.error("Could not extract AGENT_SOURCE from darknet-manager.js");
