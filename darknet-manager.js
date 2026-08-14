@@ -19,7 +19,7 @@
  * @param {NS} ns
  */
 export async function main(ns) {
-    const VERSION = "1.0.1";
+    const VERSION = "1.0.2";
 
     const AGENT = "/Temp/dnet-agent.js";
     const PHISH = "/Temp/dnet-phish.js";
@@ -669,7 +669,7 @@ export async function main(ns) {
                     harvestRawLogCredentials(target, hb.logs);
                     for (const line of hb.logs) {
                         if (typeof line !== "string") continue;
-                        const escaped = target.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+                        const escaped = target.replace(/[.*+?^$(){}|[\]\\]/g, "\\$&");
                         const named = line.match(new RegExp(escaped + ":([^\\s]+)"));
                         if (named) {
                             const r = await attempt(target, named[1], false);
