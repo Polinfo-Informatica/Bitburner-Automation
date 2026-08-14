@@ -58,7 +58,7 @@ export async function main(ns) {
 
     ns.tprint(
         `INFO: Pulling Bitburner-Automation from ${GITHUB_OWNER}/${GITHUB_REPOSITORY} ` +
-            `(branch: ${branch}).`,
+            `(branch: ${branch}).`
     );
 
     let updated = 0;
@@ -77,11 +77,11 @@ export async function main(ns) {
             downloaded = await ns.wget(
                 `${url}?ts=${Date.now()}`,
                 stage,
-                "home",
+                "home"
             );
         } catch (error) {
             ns.tprint(
-                `WARNING: Download failed for ${target.remote}: ${String(error)}`,
+                `WARNING: Download failed for ${target.remote}: ${String(error)}`
             );
         }
 
@@ -96,7 +96,7 @@ export async function main(ns) {
             contents = ns.read(stage);
         } catch (error) {
             ns.tprint(
-                `WARNING: Could not read staged ${target.remote}: ${String(error)}`,
+                `WARNING: Could not read staged ${target.remote}: ${String(error)}`
             );
         }
 
@@ -104,7 +104,7 @@ export async function main(ns) {
         if (validation) {
             failed++;
             ns.tprint(
-                `WARNING: Refusing to overwrite ${target.local}: ${validation}`,
+                `WARNING: Refusing to overwrite ${target.local}: ${validation}`
             );
             removeStage(ns, stage);
             continue;
@@ -123,12 +123,12 @@ export async function main(ns) {
                     (target.remote === "darknet-manager.js" && managerVersion
                         ? ` (v${managerVersion})`
                         : "") +
-                    ".",
+                    "."
             );
         } catch (error) {
             failed++;
             ns.tprint(
-                `WARNING: Could not write ${target.local}: ${String(error)}`,
+                `WARNING: Could not write ${target.local}: ${String(error)}`
             );
         }
 
@@ -141,12 +141,12 @@ export async function main(ns) {
         ns.tprint(
             "WARNING: darknet-manager.js was already running. The running process still " +
                 "uses the old code. Stop it, run darknet-cleanup.js, then start the " +
-                "updated manager.",
+                "updated manager."
         );
     } else if (failed === 0) {
         ns.tprint(
             "INFO: Runtime files are current. For a clean Dark Net restart, run " +
-                "darknet-cleanup.js before darknet-manager.js.",
+                "darknet-cleanup.js before darknet-manager.js."
         );
     }
 }
@@ -223,5 +223,7 @@ function printHelp(ns) {
     ns.tprint("  darknet-cleanup.js");
     ns.tprint("  git-pull.js (unless --no-self is supplied)");
     ns.tprint("");
-    ns.tprint("The updater does not start, stop, or clean Dark Net workers automatically.");
+    ns.tprint(
+        "The updater does not start, stop, or clean Dark Net workers automatically."
+    );
 }
