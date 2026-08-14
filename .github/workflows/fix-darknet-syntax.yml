@@ -1,0 +1,78 @@
+name: Fix darknet manager syntax
+
+on:
+  push:
+    paths:
+      - '.github/workflows/fix-darknet-syntax.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Patch syntax error and bump version
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path('darknet-manager.js')
+          s = p.read_text(encoding='utf-8')
+
+          old = 'const escaped = target.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&");'
+          new = 'const escaped = target.replace(/[.*+?^$(){}|[\\]\\\\]/g, "\\\\$&");'
+
+          if old not in s:
+              raise SystemExit('Expected faulty regex was not found; refusing an unsafe blind edit.')
+
+          s = s.replace(old, new, 1)
+          s = s.replace('const VERSION = "1.0.1";', 'const VERSION = "1.0.2";', 1)
+          p.write_text(s, encoding='utf-8')
+          PY
+
+      - name: Validate main script syntax
+        run: node --check darknet-manager.js
+
+      - name: Validate generated worker source blocks
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          import subprocess
+          import tempfile
+
+          text = Path('darknet-manager.js').read_text(encoding='utf-8')
+          pattern = re.compile(r'const\s+([A-Z_]+_SOURCE)\s*=\s*String\.raw`(.*?)`;', re.S)
+          blocks = pattern.findall(text)
+          if not blocks:
+              raise SystemExit('No generated worker source blocks found.')
+
+          for name, source in blocks:
+              if '${' in source:
+                  raise SystemExit(f'{name} still contains an unescaped template interpolation marker: ${{')
+              with tempfile.NamedTemporaryFile('w', suffix='.js', encoding='utf-8', delete=False) as f:
+                  f.write(source)
+                  path = f.name
+              subprocess.run(['node', '--check', path], check=True)
+              print(f'OK: {name}')
+          PY
+
+      - name: Commit corrected script
+        shell: bash
+        run: |
+          if git diff --quiet -- darknet-manager.js; then
+            echo 'No changes to commit.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add darknet-manager.js
+          git commit -m 'Fix darknet-manager.js syntax for Bitburner'
+          git push
