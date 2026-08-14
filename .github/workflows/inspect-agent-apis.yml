@@ -1,0 +1,22 @@
+name: Inspect darknet agent APIs
+on:
+  push:
+    paths:
+      - '.github/workflows/inspect-agent-apis.yml'
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract APIs
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          text=Path('darknet-manager.js').read_text()
+          m=re.search(r'const AGENT_SOURCE = String\.raw`(.*?)`;\n\n    function log',text,re.S)
+          if not m: raise SystemExit('AGENT_SOURCE not found')
+          src=m.group(1)
+          apis=sorted(set(re.findall(r'ns(?:\.[A-Za-z_$][A-Za-z0-9_$]*)+',src)))
+          print('\n'.join(apis))
+          PY
