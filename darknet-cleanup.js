@@ -14,10 +14,11 @@ export async function main(ns) {
         // Intentionally ignored: this operation is best-effort.
     }
 
-    const VERSION = "1.2.2";
+    const VERSION = "1.2.3";
     const DB_FILE = "darknet-passwords.txt";
     const REPORT_PREFIX = "/Temp/dnet-report-";
     const COMPLETION_PREFIX = "/Temp/dnet-complete-";
+    const PHISH_HEARTBEAT_PREFIX = "/Temp/dnet-phish-heartbeat-";
     const PHISH_PLAN = "/Temp/dnet-phish-plan.txt";
     const MANAGER = "darknet-manager.js";
     const CLEANUP_PASSES = 4;
@@ -77,6 +78,7 @@ export async function main(ns) {
     let processesKilled = 0;
     let managersKilled = 0;
     let completionFilesRemoved = 0;
+    let heartbeatFilesRemoved = 0;
     const checkedHosts = new Set();
     const unavailableHosts = new Set();
 
@@ -119,6 +121,13 @@ export async function main(ns) {
                         // Intentionally ignored: a prior pass may have removed it.
                     }
                 }
+                for (const file of ns.ls(host, PHISH_HEARTBEAT_PREFIX)) {
+                    try {
+                        if (ns.rm(file, host)) heartbeatFilesRemoved++;
+                    } catch {
+                        // Intentionally ignored: a prior pass may have removed it.
+                    }
+                }
             } catch {
                 unavailableHosts.add(host);
             }
@@ -126,7 +135,7 @@ export async function main(ns) {
         if (pass < CLEANUP_PASSES) await ns.sleep(1000);
     }
 
-    // Any v1.2.2 worker that briefly survives a race sees an empty plan and
+    // Any v1.2.3 worker that briefly survives a race sees an empty plan and
     // refuses to start phishing when it next receives the home control file.
     try {
         await ns.write(
@@ -157,6 +166,18 @@ export async function main(ns) {
         // Intentionally ignored: this operation is best-effort.
     }
 
+    try {
+        for (const file of ns.ls("home", PHISH_HEARTBEAT_PREFIX)) {
+            try {
+                if (ns.rm(file, "home")) heartbeatFilesRemoved++;
+            } catch {
+                // Intentionally ignored: another cleanup may have removed it.
+            }
+        }
+    } catch {
+        // Intentionally ignored: heartbeat files are diagnostic only.
+    }
+
     ns.tprint(
         "[DNET CLEANUP " +
             VERSION +
@@ -173,7 +194,9 @@ export async function main(ns) {
             " | reports removed=" +
             reportsRemoved +
             " | completion files removed=" +
-            completionFilesRemoved
+            completionFilesRemoved +
+            " | heartbeat files removed=" +
+            heartbeatFilesRemoved
     );
     ns.tprint(
         "[DNET CLEANUP " +

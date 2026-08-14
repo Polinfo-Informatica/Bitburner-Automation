@@ -36,7 +36,7 @@ export async function main(ns) {
     } catch {
         // Intentionally ignored: this operation is best-effort.
     }
-    const VERSION = "1.2.2";
+    const VERSION = "1.2.3";
 
     const AGENT = "/Temp/dnet-agent.js";
     const PHISH = "/Temp/dnet-phish.js";
@@ -49,6 +49,7 @@ export async function main(ns) {
     const PHISH_PLAN = "/Temp/dnet-phish-plan.txt";
     const DB_FILE = "darknet-passwords.txt";
     const REPORT_PREFIX = "/Temp/dnet-report-";
+    const PHISH_HEARTBEAT_PREFIX = "/Temp/dnet-phish-heartbeat-";
     const STATUS_FILE = "darknet-runtime-status.txt";
     const VISIT_MARKER = "/Temp/dnet-crawl-marker.txt";
 
@@ -58,6 +59,8 @@ export async function main(ns) {
     const STASIS_REPUSH_MS = 300000;
     const PHISH_REFRESH_MS = 15000;
     const PHISH_REPUSH_MS = 45000;
+    const PHISH_HEARTBEAT_FRESH_MS = 45000;
+    const PHISH_HEARTBEAT_RETENTION_MS = 300000;
     const PHISH_HOST_HARD_LIMIT = 4;
     const MAX_CRAWL_DEPTH = 16;
     const MAX_CRAWL_STACK = MAX_CRAWL_DEPTH + 1;
@@ -98,9 +101,20 @@ export async function main(ns) {
         // Intentionally ignored: this operation is best-effort.
     }
     const PLAN = "/Temp/dnet-phish-plan.txt";
+    const HEARTBEAT_PREFIX = "/Temp/dnet-phish-heartbeat-";
     const host = ns.getHostname();
+    const PHISH_WORKER_VERSION = "1.2.3";
     const MAX_PLAN_AGE_MS = 90000;
     const MIN_COOLDOWN_MS = 5000;
+    const HEARTBEAT_INTERVAL_MS = 15000;
+    const workerThreads = Math.max(1, Math.floor(Number(ns.args[1] || 1)));
+    const startedAt = Date.now();
+    let attackCycles = 0;
+    let successfulAttacks = 0;
+    let errorCount = 0;
+    let charismaXpEarned = 0;
+    let lastAttackAt = 0;
+    let lastHeartbeatAt = 0;
 
     function hostHash(value) {
         let hash = 2166136261 >>> 0;
@@ -111,28 +125,95 @@ export async function main(ns) {
         return hash >>> 0;
     }
 
-    function isAllowed() {
+    function readPlan() {
         try {
             const raw = ns.read(PLAN);
-            if (!raw) return false;
+            if (!raw) return null;
             const plan = JSON.parse(raw);
-            if (!plan || !Array.isArray(plan.desired)) return false;
-            if (plan.desired.length > 4) return false;
-            if (Date.now() - Number(plan.ts || 0) > MAX_PLAN_AGE_MS) return false;
-            return plan.desired.includes(host);
-        } catch { return false; }
+            if (!plan || !Array.isArray(plan.desired)) return null;
+            if (plan.desired.length > 4) return null;
+            if (Date.now() - Number(plan.ts || 0) > MAX_PLAN_AGE_MS) return null;
+            return plan;
+        } catch { return null; }
+    }
+
+    function isAllowed(plan) {
+        return !!plan && plan.desired.includes(host);
+    }
+
+    function currentCharismaExpMultiplier() {
+        try {
+            const multiplier = Number(ns.getPlayer().mults.charisma_exp);
+            return Number.isFinite(multiplier) && multiplier >= 0
+                ? multiplier
+                : 1;
+        } catch {
+            return 1;
+        }
+    }
+
+    async function publishHeartbeat(state, plan) {
+        try {
+            const file = HEARTBEAT_PREFIX + hostHash(host).toString(16) + ".txt";
+            await ns.write(
+                file,
+                JSON.stringify({
+                    version: PHISH_WORKER_VERSION,
+                    ts: Date.now(),
+                    host: host,
+                    threads: workerThreads,
+                    state: state,
+                    attackCycles: attackCycles,
+                    successfulAttacks: successfulAttacks,
+                    errorCount: errorCount,
+                    charismaXpEarned: charismaXpEarned,
+                    lastAttackAt: lastAttackAt,
+                    startedAt: startedAt,
+                    planTs: Number(plan && plan.ts || 0)
+                }),
+                "w"
+            );
+            if (await ns.scp(file, "home", host)) lastHeartbeatAt = Date.now();
+        } catch {
+            // Intentionally ignored: the next heartbeat retries automatically.
+        }
     }
 
     const stagger = 750 + (hostHash(host) % 4250);
     const cooldown = MIN_COOLDOWN_MS + (hostHash(host + ":cooldown") % 3000);
+    let plan = readPlan();
+    if (!isAllowed(plan)) {
+        await publishHeartbeat("stopped", plan);
+        return;
+    }
+    await publishHeartbeat("starting", plan);
     await ns.sleep(stagger);
 
     for (;;) {
-        if (!isAllowed()) return;
+        plan = readPlan();
+        if (!isAllowed(plan)) {
+            await publishHeartbeat("stopped", plan);
+            return;
+        }
         try {
-            await ns.dnet.phishingAttack();
+            const result = await ns.dnet.phishingAttack();
+            attackCycles++;
+            lastAttackAt = Date.now();
+            const succeeded = !!(result && result.success);
+            if (succeeded) successfulAttacks++;
+            charismaXpEarned +=
+                workerThreads *
+                (succeeded ? 50 : 12.5) *
+                currentCharismaExpMultiplier();
         } catch {
-        // Intentionally ignored: the explicit cooldown below still applies.
+            errorCount++;
+            // Intentionally ignored: the explicit cooldown below still applies.
+        }
+        if (
+            attackCycles === 1 ||
+            Date.now() - lastHeartbeatAt >= HEARTBEAT_INTERVAL_MS
+        ) {
+            await publishHeartbeat("running", plan);
         }
         try {
             await ns.sleep(cooldown);
@@ -319,7 +400,7 @@ export async function main(ns) {
         if (!(scriptRam > 0)) return;
         const free = Math.max(0, ns.getServerMaxRam(host) - ns.getServerUsedRam(host));
         const threads = Math.floor((free * 0.65) / scriptRam);
-        if (threads > 0) ns.exec(PHISH, host, threads, "managed");
+        if (threads > 0) ns.exec(PHISH, host, threads, "managed", threads);
     } catch {
         // Intentionally ignored: this operation is best-effort.
     }
@@ -348,7 +429,7 @@ export async function main(ns) {
 
     const host = ns.getHostname();
     const selfPassword = String(ns.args[0] ?? "");
-    const AGENT_VERSION = "1.2.2";
+    const AGENT_VERSION = "1.2.3";
     const crawlId = String(ns.args[2] ?? "");
     const crawlDepth = Math.max(0, Math.floor(Number(ns.args[3] || 0)));
     const parentCompletionFile = String(ns.args[4] ?? "");
@@ -401,6 +482,9 @@ export async function main(ns) {
     let phase = "starting";
     let activeTarget = "";
     let authAttempts = 0;
+    let authSuccesses = 0;
+    let authFailures = 0;
+    let authTimeouts = 0;
     let loopCount = 0;
     let lastProgress = Date.now();
     let selfDetails = null;
@@ -523,9 +607,21 @@ export async function main(ns) {
                 const r = await ns.dnet.authenticate(target, password);
                 lastProgress = Date.now();
                 last = r;
-                if (r && r.success) return { success: true, password: password, feedback: null };
+                if (r && r.success) {
+                    authSuccesses++;
+                    return {
+                        success: true,
+                        password: password,
+                        feedback: null
+                    };
+                }
                 // 408 = Request Timeout. Retry without consuming puzzle logic.
-                if (r && r.code === 408) continue;
+                if (r && r.code === 408) {
+                    authTimeouts++;
+                    continue;
+                }
+                // 401 = a completed, CHA-XP-awarding wrong-password attempt.
+                if (r && r.code === 401) authFailures++;
                 break;
             } catch {
                 return { success: false, password: password, feedback: null };
@@ -1429,6 +1525,9 @@ function decodeBinary(data) {
                 phase: phase,
                 activeTarget: activeTarget,
                 authAttempts: authAttempts,
+                authSuccesses: authSuccesses,
+                authFailures: authFailures,
+                authTimeouts: authTimeouts,
                 loopCount: loopCount,
                 crawlId: crawlId,
                 crawlDepth: crawlDepth,
@@ -1881,6 +1980,59 @@ function decodeBinary(data) {
         }
     }
 
+    function readPhishHeartbeats() {
+        const now = Date.now();
+        const latest = new Map();
+        try {
+            for (const file of ns.ls("home", PHISH_HEARTBEAT_PREFIX)) {
+                try {
+                    const heartbeat = JSON.parse(ns.read(file));
+                    if (!heartbeat || typeof heartbeat.host !== "string") {
+                        continue;
+                    }
+                    const age = now - Number(heartbeat.ts || 0);
+                    if (age > PHISH_HEARTBEAT_RETENTION_MS) {
+                        ns.rm(file, "home");
+                        continue;
+                    }
+                    const old = latest.get(heartbeat.host);
+                    if (
+                        !old ||
+                        Number(heartbeat.ts || 0) > Number(old.ts || 0)
+                    ) {
+                        latest.set(heartbeat.host, heartbeat);
+                    }
+                } catch {
+                    // Intentionally ignored: another heartbeat may still be valid.
+                }
+            }
+        } catch {
+            // Intentionally ignored: an empty result is safe and self-correcting.
+        }
+        return Array.from(latest.values()).filter(function (heartbeat) {
+            const state = String(heartbeat.state || "");
+            return (
+                heartbeat.version === VERSION &&
+                (state === "starting" || state === "running") &&
+                now - Number(heartbeat.ts || 0) <= PHISH_HEARTBEAT_FRESH_MS
+            );
+        });
+    }
+
+    function clearPhishHeartbeats() {
+        try {
+            for (const file of ns.ls("home", PHISH_HEARTBEAT_PREFIX)) {
+                try {
+                    ns.rm(file, "home");
+                } catch {
+                    // Intentionally ignored: another cleanup may have removed it.
+                }
+            }
+        } catch {
+            // Intentionally ignored: workers overwrite their own heartbeat files.
+        }
+    }
+
     async function pushPhishPlanFiles(host, password) {
         try {
             const session = ns.dnet.connectToSession(host, password);
@@ -1972,7 +2124,15 @@ function decodeBinary(data) {
             : [];
         const changed = JSON.stringify(oldDesired) !== JSON.stringify(desired);
         const needsRepush = now - Number(previous.ts || 0) >= PHISH_REPUSH_MS;
-        if (!changed && !needsRepush) return previous;
+        const heartbeatHosts = readPhishHeartbeats().map(function (heartbeat) {
+            return heartbeat.host;
+        });
+        const needsHeartbeatCorrection = heartbeatHosts.some(function (host) {
+            return !desired.includes(host);
+        });
+        if (!changed && !needsRepush && !needsHeartbeatCorrection) {
+            return previous;
+        }
 
         const plan = {
             desired: desired,
@@ -1988,7 +2148,7 @@ function decodeBinary(data) {
         await ns.write(PHISH_PLAN, JSON.stringify(plan), "w");
 
         const targets = Array.from(
-            new Set((changed ? oldDesired : []).concat(desired))
+            new Set((changed ? oldDesired : []).concat(desired, heartbeatHosts))
         );
         for (const target of targets) {
             const report = latest.get(target);
@@ -2113,25 +2273,56 @@ function decodeBinary(data) {
             // Intentionally ignored: this operation is best-effort.
         }
         const phishPlan = readCurrentPhishPlan();
-        const phishHostsRunning = [];
-        let phishThreads = 0;
-        for (const host of phishPlan.desired.slice(0, PHISH_HOST_HARD_LIMIT)) {
-            try {
-                const processes = ns.ps(host).filter(function (process) {
-                    return process.filename === PHISH;
-                });
-                if (processes.length === 0) continue;
-                phishHostsRunning.push(host);
-                for (const process of processes) {
-                    phishThreads += Number(process.threads || 0);
-                }
-            } catch {
-                // Intentionally ignored: the host may have just gone offline.
-            }
-        }
+        const phishHeartbeats = readPhishHeartbeats();
+        const phishHostsRunning = phishHeartbeats.map(function (heartbeat) {
+            return heartbeat.host;
+        });
+        const phishThreads = phishHeartbeats.reduce(function (
+            total,
+            heartbeat
+        ) {
+            return total + Number(heartbeat.threads || 0);
+        }, 0);
+        const phishAttackCycles = phishHeartbeats.reduce(function (
+            total,
+            heartbeat
+        ) {
+            return total + Number(heartbeat.attackCycles || 0);
+        }, 0);
+        const phishSuccessfulAttacks = phishHeartbeats.reduce(function (
+            total,
+            heartbeat
+        ) {
+            return total + Number(heartbeat.successfulAttacks || 0);
+        }, 0);
+        const phishCharismaXp = phishHeartbeats.reduce(function (
+            total,
+            heartbeat
+        ) {
+            return total + Number(heartbeat.charismaXpEarned || 0);
+        }, 0);
+        const unauthorizedPhishHeartbeats = phishHeartbeats
+            .filter(function (heartbeat) {
+                return !phishPlan.desired.includes(heartbeat.host);
+            })
+            .map(function (heartbeat) {
+                return heartbeat.host;
+            });
         const activeCrawlReports = list.filter(function (report) {
             return report.agentVersion === VERSION && !report.completed;
         });
+        const passwordAuthCalls = list.reduce(function (sum, report) {
+            return sum + Number(report.authAttempts || 0);
+        }, 0);
+        const passwordAuthSuccesses = list.reduce(function (sum, report) {
+            return sum + Number(report.authSuccesses || 0);
+        }, 0);
+        const passwordAuthFailures = list.reduce(function (sum, report) {
+            return sum + Number(report.authFailures || 0);
+        }, 0);
+        const passwordAuthTimeouts = list.reduce(function (sum, report) {
+            return sum + Number(report.authTimeouts || 0);
+        }, 0);
         const phases = {};
         for (const report of list) {
             const name = String(report.phase || "unknown");
@@ -2156,6 +2347,16 @@ function decodeBinary(data) {
             phishPlan: phishPlan,
             phishHostsReported: phishHostsRunning,
             phishThreadsReported: phishThreads,
+            phishAttackCyclesReported: phishAttackCycles,
+            phishSuccessfulAttacksReported: phishSuccessfulAttacks,
+            phishCharismaXpReported: phishCharismaXp,
+            phishTelemetry: "worker-heartbeat",
+            phishHeartbeats: phishHeartbeats,
+            unauthorizedPhishHeartbeats: unauthorizedPhishHeartbeats,
+            passwordAuthCallsReported: passwordAuthCalls,
+            passwordAuthSuccessesReported: passwordAuthSuccesses,
+            passwordAuthFailuresReported: passwordAuthFailures,
+            passwordAuthTimeoutsReported: passwordAuthTimeouts,
             phases: phases,
             stasis: linked,
             agents: list.map(function (report) {
@@ -2165,6 +2366,9 @@ function decodeBinary(data) {
                     phase: String(report.phase || ""),
                     activeTarget: String(report.activeTarget || ""),
                     authAttempts: Number(report.authAttempts || 0),
+                    authSuccesses: Number(report.authSuccesses || 0),
+                    authFailures: Number(report.authFailures || 0),
+                    authTimeouts: Number(report.authTimeouts || 0),
                     loopCount: Number(report.loopCount || 0),
                     crawlId: String(report.crawlId || ""),
                     crawlDepth: Number(report.crawlDepth || 0),
@@ -2191,6 +2395,15 @@ function decodeBinary(data) {
                 list.length +
                 " | known passwords=" +
                 Object.keys(db).length +
+                " | password auth=" +
+                passwordAuthCalls +
+                " calls (" +
+                passwordAuthSuccesses +
+                " success, " +
+                passwordAuthFailures +
+                " wrong, " +
+                passwordAuthTimeouts +
+                " timeout)" +
                 " | discovered Dark Net RAM=" +
                 ramText +
                 " | phishing=" +
@@ -2199,7 +2412,17 @@ function decodeBinary(data) {
                 configuredPhishHosts +
                 " hosts (" +
                 phishThreads +
-                " threads)" +
+                " threads, " +
+                phishAttackCycles +
+                " attack cycles, " +
+                phishSuccessfulAttacks +
+                " successful, " +
+                Math.round(phishCharismaXp).toLocaleString("en-US") +
+                " CHA XP since worker start; heartbeat)" +
+                (unauthorizedPhishHeartbeats.length > 0
+                    ? " | phish safety correction=" +
+                      unauthorizedPhishHeartbeats.join(",")
+                    : "") +
                 " | stasis=" +
                 linked.length +
                 " [" +
@@ -2213,6 +2436,7 @@ function decodeBinary(data) {
     await writeWorkers();
     const agentRam = ns.getScriptRam(AGENT, "home");
     const db = loadDb();
+    clearPhishHeartbeats();
     await resetPhishPlan();
     const stoppedLegacyPhish = stopKnownPhishing(db);
     log("Dark Net manager started. Persistent credential DB: " + DB_FILE, true);
@@ -2231,7 +2455,8 @@ function decodeBinary(data) {
     log(
         "Phishing safety: " +
             configuredPhishHosts +
-            " authorized host(s) maximum, 5-8 second worker cooldown." +
+            " authorized host(s) maximum, 5-8 second worker cooldown; " +
+            "direct worker heartbeat telemetry." +
             (stoppedLegacyPhish > 0
                 ? " Stopped " +
                   stoppedLegacyPhish +

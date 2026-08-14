@@ -17,7 +17,7 @@ const VISIT_MARKER = "/Temp/dnet-crawl-marker.txt";
 const PLAN = "/Temp/dnet-stasis-plan.txt";
 const PHISH_PLAN = "/Temp/dnet-phish-plan.txt";
 const DB_FILE = "darknet-passwords.txt";
-const VERSION = "1.2.2";
+const VERSION = "1.2.3";
 const CRAWL_ID = "crawler-bound-test";
 const GRAPH = {
     darkweb: ["alpha", "beta"],
@@ -158,13 +158,11 @@ function createNs(host, pid, args) {
                 maxAuthInFlight = Math.max(maxAuthInFlight, authInFlight);
                 await new Promise((resolve) => setTimeout(resolve, 0));
                 authInFlight--;
-                return {
-                    success:
-                        String(target) === "darkweb"
-                            ? String(password) === ""
-                            : String(password) === "admin",
-                    code: 200,
-                };
+                const success =
+                    String(target) === "darkweb"
+                        ? String(password) === ""
+                        : String(password) === "admin";
+                return { success, code: success ? 200 : 401 };
             },
             async heartbleed() {
                 return { success: false, logs: [] };
@@ -255,6 +253,28 @@ if (
     reports.some((report) => !report.completed || report.phase !== "complete")
 ) {
     throw new Error("not every discovered host produced a completed report");
+}
+const authSuccesses = reports.reduce(
+    (total, report) => total + Number(report.authSuccesses || 0),
+    0
+);
+const authFailures = reports.reduce(
+    (total, report) => total + Number(report.authFailures || 0),
+    0
+);
+const authAttempts = reports.reduce(
+    (total, report) => total + Number(report.authAttempts || 0),
+    0
+);
+if (authSuccesses !== Object.keys(GRAPH).length - 1) {
+    throw new Error(
+        `crawler auth telemetry was incomplete (${authSuccesses} success, ${authFailures} failures)`
+    );
+}
+if (authAttempts !== authSuccesses + authFailures) {
+    throw new Error(
+        `crawler auth telemetry did not reconcile (${authAttempts} calls vs ${authSuccesses + authFailures} rewarded results)`
+    );
 }
 
 console.log(

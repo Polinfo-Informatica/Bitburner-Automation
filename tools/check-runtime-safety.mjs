@@ -12,16 +12,20 @@ function fail(message) {
 
 const managerVersion = manager.match(/const VERSION = "([^"]+)";/)?.[1];
 const agentVersion = manager.match(/const AGENT_VERSION = "([^"]+)";/)?.[1];
+const phishWorkerVersion = manager.match(
+    /const PHISH_WORKER_VERSION = "([^"]+)";/
+)?.[1];
 const cleanupVersion = cleanup.match(/const VERSION = "([^"]+)";/)?.[1];
 const snapshotVersion = snapshot.match(/const VERSION = "([^"]+)";/)?.[1];
 if (
     !managerVersion ||
     managerVersion !== agentVersion ||
+    managerVersion !== phishWorkerVersion ||
     managerVersion !== cleanupVersion ||
     managerVersion !== snapshotVersion
 ) {
     fail(
-        `runtime versions differ (manager=${managerVersion ?? "missing"}, agent=${agentVersion ?? "missing"}, cleanup=${cleanupVersion ?? "missing"}, snapshot=${snapshotVersion ?? "missing"}).`
+        `runtime versions differ (manager=${managerVersion ?? "missing"}, agent=${agentVersion ?? "missing"}, phishing=${phishWorkerVersion ?? "missing"}, cleanup=${cleanupVersion ?? "missing"}, snapshot=${snapshotVersion ?? "missing"}).`
     );
 }
 
@@ -63,6 +67,13 @@ if (!cleanup.includes("const CLEANUP_PASSES = 4;")) {
 if (!cleanup.includes('const COMPLETION_PREFIX = "/Temp/dnet-complete-";')) {
     fail("cleanup does not remove orphaned crawler completion signals.");
 }
+if (
+    !cleanup.includes(
+        'const PHISH_HEARTBEAT_PREFIX = "/Temp/dnet-phish-heartbeat-";'
+    )
+) {
+    fail("cleanup does not remove phishing heartbeat files.");
+}
 
 for (const required of [
     "const PHISH_HOST_HARD_LIMIT = 4;",
@@ -78,6 +89,15 @@ for (const required of [
     'const COMPLETION_PREFIX = "/Temp/dnet-complete-";',
     "const MAX_CHILD_WAIT_MS = 900000;",
     "const MAX_COMPLETION_SIGNAL_ATTEMPTS = 60;",
+    'const PHISH_HEARTBEAT_PREFIX = "/Temp/dnet-phish-heartbeat-";',
+    'const HEARTBEAT_PREFIX = "/Temp/dnet-phish-heartbeat-";',
+    "const PHISH_WORKER_VERSION =",
+    'await publishHeartbeat("running", plan);',
+    "charismaXpEarned: charismaXpEarned",
+    'ns.exec(PHISH, host, threads, "managed", threads);',
+    "const phishHeartbeats = readPhishHeartbeats();",
+    'phishTelemetry: "worker-heartbeat"',
+    "passwordAuthCallsReported: passwordAuthCalls",
     "return await waitForChild(target, childPid, completionFile);",
     "await signalParentCompletion();",
     "await seedDarkweb(reports);",
@@ -114,11 +134,31 @@ if (manager.includes("const LOOP_INTERVAL")) {
         "the generated crawler still contains the old permanent polling loop."
     );
 }
+const summaryStart = manager.indexOf("async function summary(");
+const managerStart = manager.indexOf("await enforceSingleManager();");
+const summarySource = manager.slice(summaryStart, managerStart);
+if (summaryStart < 0 || managerStart < 0) {
+    fail("the manager summary source could not be isolated.");
+}
+if (summarySource.includes("ns.ps(host)")) {
+    fail("phishing summary still relies on unreliable remote ps() polling.");
+}
 if (!snapshot.includes("counts.agents > MAX_CRAWL_STACK")) {
     fail("the snapshot does not detect a crawler stack cap violation.");
 }
 if (!snapshot.includes('warnings.push("overlapping crawler generations")')) {
     fail("the snapshot does not detect overlapping crawler generations.");
+}
+if (!snapshot.includes("freshPhishHeartbeats")) {
+    fail("the snapshot does not report worker phishing heartbeats.");
+}
+if (
+    !snapshot.includes("heartbeatPhishCharismaXp") ||
+    !snapshot.includes("passwordAuthCalls")
+) {
+    fail(
+        "the snapshot does not separate phishing XP from password auth calls."
+    );
 }
 
 if (!updater.includes('"darknet-snapshot.js"')) {

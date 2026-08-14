@@ -11,10 +11,12 @@ export async function main(ns) {
         // Intentionally ignored: this operation is best-effort.
     }
 
-    const VERSION = "1.2.2";
+    const VERSION = "1.2.3";
     const MAX_CRAWL_STACK = 17;
     const DB_FILE = "darknet-passwords.txt";
     const REPORT_PREFIX = "/Temp/dnet-report-";
+    const PHISH_HEARTBEAT_PREFIX = "/Temp/dnet-phish-heartbeat-";
+    const PHISH_HEARTBEAT_FRESH_MS = 45000;
     const PHISH_PLAN = "/Temp/dnet-phish-plan.txt";
     const STATUS_FILE = "darknet-runtime-status.txt";
     const OUTPUT_FILE = "darknet-diagnostic-snapshot.txt";
@@ -59,6 +61,55 @@ export async function main(ns) {
         // Intentionally ignored: process inspection can still proceed.
     }
 
+    const latestPhishHeartbeats = new Map();
+    try {
+        for (const file of ns.ls("home", PHISH_HEARTBEAT_PREFIX)) {
+            const heartbeat = readJson(file, null);
+            if (!heartbeat || typeof heartbeat.host !== "string") continue;
+            targets.add(heartbeat.host);
+            const old = latestPhishHeartbeats.get(heartbeat.host);
+            if (!old || Number(heartbeat.ts || 0) > Number(old.ts || 0)) {
+                latestPhishHeartbeats.set(heartbeat.host, heartbeat);
+            }
+        }
+    } catch {
+        // Intentionally ignored: process/report diagnostics remain available.
+    }
+    const freshPhishHeartbeats = Array.from(
+        latestPhishHeartbeats.values()
+    ).filter(function (heartbeat) {
+        const state = String(heartbeat.state || "");
+        return (
+            heartbeat.version === VERSION &&
+            (state === "starting" || state === "running") &&
+            now - Number(heartbeat.ts || 0) <= PHISH_HEARTBEAT_FRESH_MS
+        );
+    });
+    const heartbeatPhishThreads = freshPhishHeartbeats.reduce(function (
+        total,
+        heartbeat
+    ) {
+        return total + Number(heartbeat.threads || 0);
+    }, 0);
+    const heartbeatPhishAttackCycles = freshPhishHeartbeats.reduce(function (
+        total,
+        heartbeat
+    ) {
+        return total + Number(heartbeat.attackCycles || 0);
+    }, 0);
+    const heartbeatPhishSuccessfulAttacks = freshPhishHeartbeats.reduce(
+        function (total, heartbeat) {
+            return total + Number(heartbeat.successfulAttacks || 0);
+        },
+        0
+    );
+    const heartbeatPhishCharismaXp = freshPhishHeartbeats.reduce(function (
+        total,
+        heartbeat
+    ) {
+        return total + Number(heartbeat.charismaXpEarned || 0);
+    }, 0);
+
     const counts = {
         managers: 0,
         agents: 0,
@@ -77,6 +128,13 @@ export async function main(ns) {
     const unauthorizedPhishHosts = [];
     const desired =
         plan && Array.isArray(plan.desired) ? plan.desired.slice() : [];
+    const unauthorizedHeartbeatHosts = freshPhishHeartbeats
+        .filter(function (heartbeat) {
+            return !desired.includes(heartbeat.host);
+        })
+        .map(function (heartbeat) {
+            return heartbeat.host;
+        });
 
     for (const host of targets) {
         let processes;
@@ -148,6 +206,18 @@ export async function main(ns) {
     const freshReports = reports.filter(function (report) {
         return now - Number(report.ts || 0) <= 180000;
     });
+    const passwordAuthCalls = freshReports.reduce(function (sum, report) {
+        return sum + Number(report.authAttempts || 0);
+    }, 0);
+    const passwordAuthSuccesses = freshReports.reduce(function (sum, report) {
+        return sum + Number(report.authSuccesses || 0);
+    }, 0);
+    const passwordAuthFailures = freshReports.reduce(function (sum, report) {
+        return sum + Number(report.authFailures || 0);
+    }, 0);
+    const passwordAuthTimeouts = freshReports.reduce(function (sum, report) {
+        return sum + Number(report.authTimeouts || 0);
+    }, 0);
     const phaseCounts = {};
     for (const report of freshReports) {
         const phase = String(report.phase || "unknown");
@@ -163,9 +233,15 @@ export async function main(ns) {
         warnings.push("overlapping crawler generations");
     }
     if (counts.phishing > 4) warnings.push("phishing host hard cap exceeded");
+    if (freshPhishHeartbeats.length > 4) {
+        warnings.push("phishing heartbeat hard cap exceeded");
+    }
     if (desired.length > 4) warnings.push("phishing plan hard cap exceeded");
     if (unauthorizedPhishHosts.length > 0) {
         warnings.push("phishing running outside plan");
+    }
+    if (unauthorizedHeartbeatHosts.length > 0) {
+        warnings.push("phishing heartbeat outside plan");
     }
     if (
         Object.keys(agentVersions).some(function (version) {
@@ -189,6 +265,18 @@ export async function main(ns) {
         phishingPlan: plan,
         phishingPlanAgeMs: now - Number((plan && plan.ts) || 0),
         unauthorizedPhishHosts: Array.from(new Set(unauthorizedPhishHosts)),
+        unauthorizedHeartbeatHosts: Array.from(
+            new Set(unauthorizedHeartbeatHosts)
+        ),
+        freshPhishHeartbeats: freshPhishHeartbeats,
+        heartbeatPhishThreads: heartbeatPhishThreads,
+        heartbeatPhishAttackCycles: heartbeatPhishAttackCycles,
+        heartbeatPhishSuccessfulAttacks: heartbeatPhishSuccessfulAttacks,
+        heartbeatPhishCharismaXp: heartbeatPhishCharismaXp,
+        passwordAuthCalls: passwordAuthCalls,
+        passwordAuthSuccesses: passwordAuthSuccesses,
+        passwordAuthFailures: passwordAuthFailures,
+        passwordAuthTimeouts: passwordAuthTimeouts,
         phases: phaseCounts,
         warnings: warnings,
         lastManagerStatus: lastManagerStatus,
@@ -199,6 +287,9 @@ export async function main(ns) {
                 phase: String(report.phase || ""),
                 activeTarget: String(report.activeTarget || ""),
                 authAttempts: Number(report.authAttempts || 0),
+                authSuccesses: Number(report.authSuccesses || 0),
+                authFailures: Number(report.authFailures || 0),
+                authTimeouts: Number(report.authTimeouts || 0),
                 loopCount: Number(report.loopCount || 0),
                 crawlId: String(report.crawlId || ""),
                 crawlDepth: Number(report.crawlDepth || 0),
@@ -223,10 +314,24 @@ export async function main(ns) {
             " | managed=" +
             counts.totalManaged +
             " | phishing=" +
-            counts.phishing +
+            freshPhishHeartbeats.length +
             "/4 hosts (" +
-            counts.phishThreads +
-            " threads) | fresh reports=" +
+            heartbeatPhishThreads +
+            " threads, " +
+            heartbeatPhishAttackCycles +
+            " cycles, " +
+            Math.round(heartbeatPhishCharismaXp).toLocaleString("en-US") +
+            " CHA XP since worker start; heartbeat) | password auth=" +
+            passwordAuthCalls +
+            " calls (" +
+            passwordAuthSuccesses +
+            " success, " +
+            passwordAuthFailures +
+            " wrong, " +
+            passwordAuthTimeouts +
+            " timeout) | ps-visible=" +
+            counts.phishing +
+            " hosts | fresh reports=" +
             freshReports.length +
             " | warnings=" +
             (warnings.join(", ") || "none")
