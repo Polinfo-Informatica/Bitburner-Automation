@@ -76,16 +76,21 @@ if (
 }
 
 for (const required of [
-    "const PHISH_HOST_HARD_LIMIT = 4;",
-    "const MIN_COOLDOWN_MS = 5000;",
-    "plan.desired.length > 4",
-    "await ns.sleep(cooldown)",
-    "const MIN_DNET_REQUEST_INTERVAL = 750;",
+    "const OFFICIAL_MAX_STASIS_LINKS = 4;",
+    "const OFFICIAL_MAX_NET_DEPTH = 40;",
+    "const CRAWL_DEPTH_STEP = 8;",
+    "const MIN_RESCAN_QUIET_MS = 30000;",
+    "getConfiguredPhishHosts()",
+    "linkedHosts.has(report.host)",
+    "const threads = Math.floor(free / scriptRam);",
+    "const stagger = hostHash(host) % 200;",
+    "await ns.dnet.phishingAttack();",
+    "void ns.dnet",
+    ".nextMutation()",
     "const MAX_BRUTE_ATTEMPTS = 100;",
     'const VISIT_MARKER = "/Temp/dnet-crawl-marker.txt";',
-    "const MAX_CRAWL_DEPTH = 16;",
-    "const MAX_CRAWL_STACK = MAX_CRAWL_DEPTH + 1;",
-    "const CRAWL_RESTART_DELAY_MS = 120000;",
+    "crawlDepthLimit",
+    "const MAX_CRAWL_STACK = OFFICIAL_MAX_NET_DEPTH + 1;",
     'const COMPLETION_PREFIX = "/Temp/dnet-complete-";',
     "const MAX_CHILD_WAIT_MS = 900000;",
     "const MAX_COMPLETION_SIGNAL_ATTEMPTS = 60;",
@@ -94,9 +99,10 @@ for (const required of [
     "const PHISH_WORKER_VERSION =",
     'await publishHeartbeat("running", plan);',
     "charismaXpEarned: charismaXpEarned",
+    "workerId: workerId",
     'ns.exec(PHISH, host, threads, "managed", threads);',
     "const phishHeartbeats = readPhishHeartbeats();",
-    'phishTelemetry: "worker-heartbeat"',
+    'phishTelemetry: "manager-session worker-heartbeat deltas"',
     "passwordAuthCallsReported: passwordAuthCalls",
     "return await waitForChild(target, childPid, completionFile);",
     "await signalParentCompletion();",
@@ -143,7 +149,7 @@ if (summaryStart < 0 || managerStart < 0) {
 if (summarySource.includes("ns.ps(host)")) {
     fail("phishing summary still relies on unreliable remote ps() polling.");
 }
-if (!snapshot.includes("counts.agents > MAX_CRAWL_STACK")) {
+if (!snapshot.includes("counts.agents > liveCrawlStackLimit")) {
     fail("the snapshot does not detect a crawler stack cap violation.");
 }
 if (!snapshot.includes('warnings.push("overlapping crawler generations")')) {

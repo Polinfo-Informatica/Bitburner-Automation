@@ -31,13 +31,18 @@ async function simulatePhish(desired) {
     const sleeps = [];
     const files = new Map();
     const heartbeats = [];
-    const plan = JSON.stringify({ desired, ts: Date.now() });
     const ns = {
         args: ["managed", 20],
+        pid: 123,
         disableLog: () => {},
         getHostname: () => "alpha",
         getPlayer: () => ({ mults: { charisma_exp: 2 } }),
-        read: () => plan,
+        read: () =>
+            JSON.stringify({
+                desired: attacks.length >= 3 ? [] : desired,
+                maxHosts: 4,
+                ts: Date.now(),
+            }),
         write: async (filename, data) => {
             files.set(String(filename), String(data));
             return true;
@@ -68,14 +73,14 @@ if (authorized.attacks.length !== 3) {
         `authorized worker made ${authorized.attacks.length} simulated attacks`
     );
 }
-for (const cooldown of authorized.sleeps.slice(1)) {
-    if (cooldown < 5000) fail(`post-attack cooldown was only ${cooldown} ms`);
+if (authorized.sleeps.length !== 1 || authorized.sleeps[0] >= 200) {
+    fail("worker did not use exactly one engine-minimum-window start stagger");
 }
 const runningHeartbeat = authorized.heartbeats.find(
     (heartbeat) => heartbeat.state === "running"
 );
 if (!runningHeartbeat) fail("authorized worker sent no running heartbeat");
-if (runningHeartbeat.version !== "1.2.3") {
+if (runningHeartbeat.version !== "1.3.0") {
     fail(`worker heartbeat version was ${runningHeartbeat.version}`);
 }
 if (Number(runningHeartbeat.threads) !== 20) {
@@ -109,7 +114,7 @@ const launcherMain = buildMain("PHISH_LAUNCHER_SOURCE");
 
 async function simulateLauncher(desired) {
     const executions = [];
-    const plan = JSON.stringify({ desired, ts: Date.now() });
+    const plan = JSON.stringify({ desired, maxHosts: 4, ts: Date.now() });
     const ns = {
         disableLog: () => {},
         getHostname: () => "alpha",
@@ -131,10 +136,10 @@ const authorizedLaunches = await simulateLauncher(["alpha"]);
 if (authorizedLaunches.length !== 1) {
     fail("authorized launcher did not start exactly one worker");
 }
-if (Number(authorizedLaunches[0][2]) !== 20) {
-    fail(`launcher selected ${authorizedLaunches[0][2]} threads instead of 20`);
+if (Number(authorizedLaunches[0][2]) !== 32) {
+    fail(`launcher selected ${authorizedLaunches[0][2]} threads instead of 32`);
 }
-if (Number(authorizedLaunches[0][4]) !== 20) {
+if (Number(authorizedLaunches[0][4]) !== 32) {
     fail("launcher did not pass the selected thread count to telemetry");
 }
 if ((await simulateLauncher([])).length !== 0) {
@@ -145,5 +150,5 @@ if ((await simulateLauncher(["alpha", "b", "c", "d", "e"])).length !== 0) {
 }
 
 console.log(
-    "Phishing bound check OK (four-host authorization cap; 5s minimum cooldown; worker heartbeat telemetry)."
+    "Phishing efficiency check OK (stasis ceiling, native action pacing, full free-RAM packing, unique telemetry)."
 );

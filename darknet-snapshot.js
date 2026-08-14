@@ -1,6 +1,9 @@
 /**
  * darknet-snapshot.js
- * One-shot process/report snapshot for Dark Net runtime diagnosis.
+ * One-shot process, control-plan, and telemetry snapshot.
+ *
+ * The terminal output is intentionally compact. Full machine-readable details
+ * are written to darknet-diagnostic-snapshot.txt for deeper inspection.
  *
  * @param {NS} ns
  */
@@ -11,8 +14,9 @@ export async function main(ns) {
         // Intentionally ignored: this operation is best-effort.
     }
 
-    const VERSION = "1.2.3";
-    const MAX_CRAWL_STACK = 17;
+    const VERSION = "1.3.0";
+    const OFFICIAL_MAX_CRAWL_STACK = 41;
+    const OFFICIAL_MAX_STASIS_LINKS = 4;
     const DB_FILE = "darknet-passwords.txt";
     const REPORT_PREFIX = "/Temp/dnet-report-";
     const PHISH_HEARTBEAT_PREFIX = "/Temp/dnet-phish-heartbeat-";
@@ -224,19 +228,41 @@ export async function main(ns) {
         phaseCounts[phase] = Number(phaseCounts[phase] || 0) + 1;
     }
 
+    const liveCrawlStackLimit = Math.max(
+        1,
+        Math.min(
+            OFFICIAL_MAX_CRAWL_STACK,
+            Number(
+                (lastManagerStatus && lastManagerStatus.crawlerStackLimit) ||
+                    OFFICIAL_MAX_CRAWL_STACK
+            )
+        )
+    );
+    const plannedPhishLimit = Math.max(
+        0,
+        Math.min(
+            OFFICIAL_MAX_STASIS_LINKS,
+            Number((plan && plan.maxHosts) || 0)
+        )
+    );
+
     const warnings = [];
     if (counts.managers > 1) warnings.push("multiple managers");
-    if (counts.agents > MAX_CRAWL_STACK) {
+    if (counts.agents > liveCrawlStackLimit) {
         warnings.push("crawler stack hard cap exceeded");
     }
     if (activeCrawlIds.size > 1) {
         warnings.push("overlapping crawler generations");
     }
-    if (counts.phishing > 4) warnings.push("phishing host hard cap exceeded");
-    if (freshPhishHeartbeats.length > 4) {
+    if (counts.phishing > plannedPhishLimit) {
+        warnings.push("phishing host plan exceeded");
+    }
+    if (freshPhishHeartbeats.length > plannedPhishLimit) {
         warnings.push("phishing heartbeat hard cap exceeded");
     }
-    if (desired.length > 4) warnings.push("phishing plan hard cap exceeded");
+    if (desired.length > plannedPhishLimit) {
+        warnings.push("phishing plan hard cap exceeded");
+    }
     if (unauthorizedPhishHosts.length > 0) {
         warnings.push("phishing running outside plan");
     }
@@ -262,6 +288,7 @@ export async function main(ns) {
         processCounts: counts,
         agentVersions: agentVersions,
         activeCrawlIds: Array.from(activeCrawlIds),
+        liveCrawlStackLimit: liveCrawlStackLimit,
         phishingPlan: plan,
         phishingPlanAgeMs: now - Number((plan && plan.ts) || 0),
         unauthorizedPhishHosts: Array.from(new Set(unauthorizedPhishHosts)),
@@ -307,34 +334,43 @@ export async function main(ns) {
     ns.tprint(
         "[DNET SNAPSHOT " +
             VERSION +
-            "] managers=" +
+            "] STATUS | managers=" +
             counts.managers +
-            " | agents=" +
+            " | crawl=" +
             counts.agents +
+            "/" +
+            liveCrawlStackLimit +
             " | managed=" +
             counts.totalManaged +
-            " | phishing=" +
-            freshPhishHeartbeats.length +
-            "/4 hosts (" +
-            heartbeatPhishThreads +
-            " threads, " +
-            heartbeatPhishAttackCycles +
-            " cycles, " +
-            Math.round(heartbeatPhishCharismaXp).toLocaleString("en-US") +
-            " CHA XP since worker start; heartbeat) | password auth=" +
-            passwordAuthCalls +
-            " calls (" +
-            passwordAuthSuccesses +
-            " success, " +
-            passwordAuthFailures +
-            " wrong, " +
-            passwordAuthTimeouts +
-            " timeout) | ps-visible=" +
-            counts.phishing +
-            " hosts | fresh reports=" +
+            " | reports=" +
             freshReports.length +
             " | warnings=" +
             (warnings.join(", ") || "none")
+    );
+    ns.tprint(
+        "[DNET SNAPSHOT " +
+            VERSION +
+            "] YIELD  | auth=" +
+            passwordAuthSuccesses +
+            "/" +
+            passwordAuthCalls +
+            " success (" +
+            passwordAuthFailures +
+            " wrong, " +
+            passwordAuthTimeouts +
+            " timeout) | phish=" +
+            freshPhishHeartbeats.length +
+            "/" +
+            plannedPhishLimit +
+            " hosts, " +
+            heartbeatPhishThreads +
+            " threads | current-worker counters=" +
+            heartbeatPhishSuccessfulAttacks +
+            "/" +
+            heartbeatPhishAttackCycles +
+            " success, ~" +
+            Math.round(heartbeatPhishCharismaXp).toLocaleString("en-US") +
+            " CHA XP"
     );
     ns.tprint("[DNET SNAPSHOT] Wrote " + OUTPUT_FILE + ".");
 }

@@ -102,17 +102,33 @@ run darknet-manager.js
 ```
 
 The manager generates its own worker scripts under `/Temp`. Dark Net discovery
-uses a serialized depth-first crawler: only one branch advances at a time,
-waiting parent agents do no Dark Net work, the traversal stack is capped at 17
-agents, and completed crawls pause for two minutes before rescanning mutations.
+uses a serialized depth-first crawler: only one branch advances at a time and
+waiting parents perform no Dark Net actions. Traversal starts with the game's
+official eight-row structural segment, expands by eight only when necessary,
+and never exceeds the engine's official forty-row maximum. A completed crawl
+waits for a real Dark Net mutation plus one 30-second quiet window before it can
+restart.
 
-Phishing is manager-controlled, limited to the four highest-RAM eligible
-servers, staggered, and rate-limited. To isolate the crawler with phishing
-fully disabled, start it with:
+Phishing is manager-controlled. Automatic mode uses the player's live stasis
+capacity (one to four servers), selects stable high-RAM targets, and packs each
+worker into the exact currently free RAM. The game API already paces each
+attack, so the manager adds no redundant successful-call cooldown.
+
+To request fewer phishing hosts:
+
+```text
+run darknet-manager.js --phish-hosts 1
+```
+
+To isolate the crawler with phishing fully disabled:
 
 ```text
 run darknet-manager.js --no-phish
 ```
+
+The researched mechanics, formulas, source links, and derivation of every
+important runtime ceiling are documented in
+[`docs/runtime-limits.md`](docs/runtime-limits.md).
 
 To capture a one-shot runtime diagnosis while the manager is running:
 

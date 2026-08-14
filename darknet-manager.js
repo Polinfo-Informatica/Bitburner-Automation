@@ -1,7 +1,9 @@
 /** @type {[string, string | number | boolean | string[]][]} */
 const ARGS_SCHEMA = [
     ["no-phish", false],
-    ["phish-hosts", 4],
+    // -1 selects the current in-game stasis-link limit automatically.
+    //  0 disables phishing; 1-4 requests an explicit (still safe) maximum.
+    ["phish-hosts", -1],
     ["help", false],
 ];
 
@@ -12,10 +14,12 @@ export function autocomplete(data) {
 
 /**
  * darknet-manager.js
- * Bitburner 3.0.1 Dark Net automation
+ * Bitburner 3.0.1 Dark Net automation.
  *
- * Designed to run as a long-lived helper under alainbryden/bitburner-scripts.
- * Paste only this file. It generates its own remote workers under /Temp.
+ * This is the only long-lived home process. It generates small, single-purpose
+ * workers under /Temp and deploys them only while they are useful. Expensive
+ * network traversal is serialized so JavaScript process count grows with path
+ * depth, never with the number of branches in the network.
  *
  * Goals:
  *   - probe and recursively explore the Dark Net
@@ -36,7 +40,7 @@ export async function main(ns) {
     } catch {
         // Intentionally ignored: this operation is best-effort.
     }
-    const VERSION = "1.2.3";
+    const VERSION = "1.3.0";
 
     const AGENT = "/Temp/dnet-agent.js";
     const PHISH = "/Temp/dnet-phish.js";
@@ -53,44 +57,83 @@ export async function main(ns) {
     const STATUS_FILE = "darknet-runtime-status.txt";
     const VISIT_MARKER = "/Temp/dnet-crawl-marker.txt";
 
-    const REPORT_FRESH_MS = 180000;
-    const REPORT_RETENTION_MS = 600000;
+    // Control-plane timing. Workers report every 15 seconds, so a report is
+    // considered live for 12 missed heartbeats and retained for 40. The wider
+    // margins tolerate a slow UI thread without causing duplicate deployment.
+    const REPORT_INTERVAL_MS = 15000;
+    const REPORT_FRESH_MS = REPORT_INTERVAL_MS * 12;
+    const REPORT_RETENTION_MS = REPORT_INTERVAL_MS * 40;
     const STASIS_REFRESH_MS = 30000;
     const STASIS_REPUSH_MS = 300000;
     const PHISH_REFRESH_MS = 15000;
     const PHISH_REPUSH_MS = 45000;
     const PHISH_HEARTBEAT_FRESH_MS = 45000;
     const PHISH_HEARTBEAT_RETENTION_MS = 300000;
-    const PHISH_HOST_HARD_LIMIT = 4;
-    const MAX_CRAWL_DEPTH = 16;
-    const MAX_CRAWL_STACK = MAX_CRAWL_DEPTH + 1;
-    const CRAWL_RESTART_DELAY_MS = 120000;
-    const SUMMARY_INTERVAL_MS = 30000;
+    // Official v3.0.1 mechanics: one base stasis link plus one each from The
+    // Broken Wings, The Hammer, and The Staff. The API supplies the live limit;
+    // four is only the engine-level validation ceiling for received plans.
+    const OFFICIAL_MAX_STASIS_LINKS = 4;
+
+    // Official Dark Net topology constants (Enums.ts): an air gap every eight
+    // rows and an absolute maximum of forty. Incremental deepening starts at
+    // one structural segment and grows only when a crawl reaches its edge.
+    const CRAWL_DEPTH_STEP = 8;
+    const OFFICIAL_MAX_NET_DEPTH = 40;
+    const MAX_CRAWL_STACK = OFFICIAL_MAX_NET_DEPTH + 1;
+
+    // One official 30-second row interval is the minimum quiet period after a
+    // completed crawl. A real nextMutation() notification is also required, so
+    // a static network is not rescanned merely because a timer expired.
+    const MIN_RESCAN_QUIET_MS = 30000;
+    const SUMMARY_INTERVAL_MS = 60000;
+    const CONTROL_TICK_MS = 5000;
     const WORKER_REFRESH_MS = 300000;
 
     const options = ns.flags(ARGS_SCHEMA);
     if (options.help) {
         ns.tprint("Bitburner Dark Net manager v" + VERSION);
         ns.tprint(
-            "Usage: run darknet-manager.js [--no-phish] [--phish-hosts 0-4]"
+            "Usage: run darknet-manager.js [--no-phish] [--phish-hosts -1..4]"
         );
         ns.tprint(
-            "Phishing is capped at four manager-selected hosts and is rate-limited."
+            "--phish-hosts -1 uses the live stasis-link limit (recommended); 0 disables phishing."
         );
         return;
     }
     const requestedPhishHosts = Number(options["phish-hosts"]);
-    const configuredPhishHosts = options["no-phish"]
+    const requestedPhishHostLimit = options["no-phish"]
         ? 0
-        : Math.max(
-              0,
-              Math.min(
-                  PHISH_HOST_HARD_LIMIT,
-                  Number.isFinite(requestedPhishHosts)
-                      ? Math.floor(requestedPhishHosts)
-                      : PHISH_HOST_HARD_LIMIT
-              )
-          );
+        : Number.isFinite(requestedPhishHosts)
+          ? Math.floor(requestedPhishHosts)
+          : -1;
+
+    /** Return the engine-enforced stasis capacity (1-4 in v3.0.1). */
+    function getLiveStasisLimit() {
+        try {
+            return Math.max(
+                0,
+                Math.min(
+                    OFFICIAL_MAX_STASIS_LINKS,
+                    Math.floor(Number(ns.dnet.getStasisLinkLimit() || 0))
+                )
+            );
+        } catch {
+            // One is the documented base capacity. The API will replace this
+            // fallback as soon as Dark Net access becomes available.
+            return 1;
+        }
+    }
+
+    /**
+     * Auto mode follows stasis capacity so every long-lived phishing worker
+     * runs on a server protected from movement, deletion, and restart.
+     */
+    function getConfiguredPhishHosts() {
+        if (requestedPhishHostLimit === 0) return 0;
+        const liveLimit = getLiveStasisLimit();
+        if (requestedPhishHostLimit < 0) return liveLimit;
+        return Math.min(liveLimit, Math.max(0, requestedPhishHostLimit));
+    }
 
     // Keep all generated-worker code free of template literals so it can live safely
     // inside these String.raw blocks.
@@ -103,12 +146,13 @@ export async function main(ns) {
     const PLAN = "/Temp/dnet-phish-plan.txt";
     const HEARTBEAT_PREFIX = "/Temp/dnet-phish-heartbeat-";
     const host = ns.getHostname();
-    const PHISH_WORKER_VERSION = "1.2.3";
+    const PHISH_WORKER_VERSION = "1.3.0";
     const MAX_PLAN_AGE_MS = 90000;
-    const MIN_COOLDOWN_MS = 5000;
     const HEARTBEAT_INTERVAL_MS = 15000;
+    const ERROR_BACKOFF_MS = 1000;
     const workerThreads = Math.max(1, Math.floor(Number(ns.args[1] || 1)));
     const startedAt = Date.now();
+    const workerId = host + ":" + ns.pid + ":" + startedAt;
     let attackCycles = 0;
     let successfulAttacks = 0;
     let errorCount = 0;
@@ -131,7 +175,8 @@ export async function main(ns) {
             if (!raw) return null;
             const plan = JSON.parse(raw);
             if (!plan || !Array.isArray(plan.desired)) return null;
-            if (plan.desired.length > 4) return null;
+            const maxHosts = Math.max(0, Math.min(4, Number(plan.maxHosts || 0)));
+            if (plan.desired.length > maxHosts) return null;
             if (Date.now() - Number(plan.ts || 0) > MAX_PLAN_AGE_MS) return null;
             return plan;
         } catch { return null; }
@@ -154,12 +199,16 @@ export async function main(ns) {
 
     async function publishHeartbeat(state, plan) {
         try {
-            const file = HEARTBEAT_PREFIX + hostHash(host).toString(16) + ".txt";
+            // A PID-specific file lets the manager retain the final counters of
+            // a retiring worker instead of replacing them with the next worker.
+            const file = HEARTBEAT_PREFIX + hostHash(workerId).toString(16) + ".txt";
             await ns.write(
                 file,
                 JSON.stringify({
                     version: PHISH_WORKER_VERSION,
                     ts: Date.now(),
+                    workerId: workerId,
+                    pid: ns.pid,
                     host: host,
                     threads: workerThreads,
                     state: state,
@@ -179,8 +228,10 @@ export async function main(ns) {
         }
     }
 
-    const stagger = 750 + (hostHash(host) % 4250);
-    const cooldown = MIN_COOLDOWN_MS + (hostHash(host + ":cooldown") % 3000);
+    // phishingAttack() already yields for 0.2-10 seconds in v3.0.1. Stagger
+    // starts within its official 200 ms minimum window; no duplicate cooldown
+    // is added after successful calls.
+    const stagger = hostHash(host) % 200;
     let plan = readPlan();
     if (!isAllowed(plan)) {
         await publishHeartbeat("stopped", plan);
@@ -207,18 +258,15 @@ export async function main(ns) {
                 currentCharismaExpMultiplier();
         } catch {
             errorCount++;
-            // Intentionally ignored: the explicit cooldown below still applies.
+            // Exceptions can return immediately, so only failures need a short
+            // backoff to prevent an error loop from consuming the UI thread.
+            await ns.sleep(ERROR_BACKOFF_MS);
         }
         if (
             attackCycles === 1 ||
             Date.now() - lastHeartbeatAt >= HEARTBEAT_INTERVAL_MS
         ) {
             await publishHeartbeat("running", plan);
-        }
-        try {
-            await ns.sleep(cooldown);
-        } catch {
-            return;
         }
     }
 }
@@ -392,14 +440,19 @@ export async function main(ns) {
         if (!raw) return;
         const plan = JSON.parse(raw);
         if (!plan || !Array.isArray(plan.desired)) return;
-        if (plan.desired.length > 4) return;
+        const maxHosts = Math.max(0, Math.min(4, Number(plan.maxHosts || 0)));
+        if (plan.desired.length > maxHosts) return;
         if (Date.now() - Number(plan.ts || 0) > 90000) return;
         if (!plan.desired.includes(host)) return;
         if (ns.ps(host).some(function (p) { return p.filename === PHISH; })) return;
         const scriptRam = ns.getScriptRam(PHISH, host);
         if (!(scriptRam > 0)) return;
         const free = Math.max(0, ns.getServerMaxRam(host) - ns.getServerUsedRam(host));
-        const threads = Math.floor((free * 0.65) / scriptRam);
+        // Netscript charges the same RAM per thread while phishing rewards are
+        // linear in thread count. Packing one process into all currently free
+        // RAM therefore maximizes reward per process and minimizes JS overhead.
+        // The launcher's own RAM is already included in getServerUsedRam().
+        const threads = Math.floor(free / scriptRam);
         if (threads > 0) ns.exec(PHISH, host, threads, "managed", threads);
     } catch {
         // Intentionally ignored: this operation is best-effort.
@@ -429,18 +482,23 @@ export async function main(ns) {
 
     const host = ns.getHostname();
     const selfPassword = String(ns.args[0] ?? "");
-    const AGENT_VERSION = "1.2.3";
+    const AGENT_VERSION = "1.3.0";
     const crawlId = String(ns.args[2] ?? "");
     const crawlDepth = Math.max(0, Math.floor(Number(ns.args[3] || 0)));
     const parentCompletionFile = String(ns.args[4] ?? "");
+    const crawlDepthLimit = Math.max(
+        1,
+        Math.min(40, Math.floor(Number(ns.args[5] || 8)))
+    );
     const REPORT_INTERVAL = 15000;
     const LOOT_INTERVAL = 60000;
     const CHILD_POLL_MS = 2000;
     const MAX_CHILD_WAIT_MS = 900000;
     const COMPLETION_RETRY_MS = 1000;
     const MAX_COMPLETION_SIGNAL_ATTEMPTS = 60;
-    const MAX_CRAWL_DEPTH = 16;
-    const MIN_DNET_REQUEST_INTERVAL = 750;
+    // authenticate() and heartbleed() are already asynchronous Netscript
+    // operations. Adding another request throttle only wastes wall-clock time;
+    // every potentially repeated path below awaits the game API directly.
     const MAX_AUTH_RETRIES = 4;
     const MAX_BRUTE_ATTEMPTS = 100;
 
@@ -478,7 +536,6 @@ export async function main(ns) {
     const cooldownUntil = new Map();
     let lastReport = 0;
     let lastLoot = 0;
-    let lastDnetRequest = 0;
     let phase = "starting";
     let activeTarget = "";
     let authAttempts = 0;
@@ -567,16 +624,8 @@ export async function main(ns) {
         }
     }
 
-    async function waitForDnetSlot() {
-        const wait =
-            MIN_DNET_REQUEST_INTERVAL - (Date.now() - lastDnetRequest);
-        if (wait > 0) await ns.sleep(wait);
-        lastDnetRequest = Date.now();
-    }
-
     async function heartbleedFeedback(target, attempted, count) {
         try {
-            await waitForDnetSlot();
             phase = "heartbleed";
             activeTarget = target;
             const hb = await ns.dnet.heartbleed(target, { peek: false, logsToCapture: count || 3 });
@@ -597,7 +646,6 @@ export async function main(ns) {
         let last = null;
         for (let retry = 0; retry < MAX_AUTH_RETRIES; retry++) {
             try {
-                await waitForDnetSlot();
                 phase = "authenticate";
                 activeTarget = target;
                 authAttempts++;
@@ -1303,7 +1351,7 @@ function decodeBinary(data) {
     }
 
     async function deployChild(target, password) {
-        if (!crawlId || crawlDepth >= MAX_CRAWL_DEPTH) return false;
+        if (!crawlId || crawlDepth >= crawlDepthLimit) return false;
         const completionFile = completionFileFor(target);
 
         try {
@@ -1385,7 +1433,8 @@ function decodeBinary(data) {
                 AGENT_VERSION,
                 crawlId,
                 crawlDepth + 1,
-                completionFile
+                completionFile,
+                crawlDepthLimit
             );
         } catch {
             childPid = 0;
@@ -1420,7 +1469,8 @@ function decodeBinary(data) {
             if (!raw) return null;
             const plan = JSON.parse(raw);
             if (!plan || !Array.isArray(plan.desired)) return null;
-            if (plan.desired.length > 4) return null;
+            const maxHosts = Math.max(0, Math.min(4, Number(plan.maxHosts || 0)));
+            if (plan.desired.length > maxHosts) return null;
             if (Date.now() - Number(plan.ts || 0) > 90000) return null;
             return plan;
         } catch { return null; }
@@ -1531,6 +1581,7 @@ function decodeBinary(data) {
                 loopCount: loopCount,
                 crawlId: crawlId,
                 crawlDepth: crawlDepth,
+                crawlDepthLimit: crawlDepthLimit,
                 completed: phase === "complete" || phase === "failed",
                 lastProgress: lastProgress,
                 managedProcesses: managedProcesses,
@@ -1551,7 +1602,7 @@ function decodeBinary(data) {
     }
     }
 
-    if (!crawlId || crawlDepth > MAX_CRAWL_DEPTH) return;
+    if (!crawlId || crawlDepth > crawlDepthLimit) return;
     try { await ns.write(VISIT_MARKER, crawlId, "w"); }
     catch { return; }
 
@@ -1571,7 +1622,7 @@ function decodeBinary(data) {
 
         phase = "probe";
         lastNeighbors = safeProbe();
-        if (crawlDepth < MAX_CRAWL_DEPTH) {
+        if (crawlDepth < crawlDepthLimit) {
             for (const target of lastNeighbors) {
                 if (target === host) continue;
                 activeTarget = target;
@@ -1641,14 +1692,28 @@ function decodeBinary(data) {
         }
     }
 
+    /** Write generated code only when missing or changed. */
+    async function writeWorkerIfChanged(file, source) {
+        try {
+            if (String(ns.read(file) || "") === source) return false;
+        } catch {
+            // A missing or unreadable file is repaired by the write below.
+        }
+        await ns.write(file, source, "w");
+        return true;
+    }
+
     async function writeWorkers() {
-        await ns.write(AGENT, AGENT_SOURCE, "w");
-        await ns.write(PHISH, PHISH_SOURCE, "w");
-        await ns.write(PHISH_LAUNCHER, PHISH_LAUNCHER_SOURCE, "w");
-        await ns.write(RAM_LAUNCHER, RAM_LAUNCHER_SOURCE, "w");
-        await ns.write(RAM_WORKER, RAM_WORKER_SOURCE, "w");
-        await ns.write(STASIS, STASIS_SOURCE, "w");
-        await ns.write(LOOT, LOOT_SOURCE, "w");
+        let writes = 0;
+        if (await writeWorkerIfChanged(AGENT, AGENT_SOURCE)) writes++;
+        if (await writeWorkerIfChanged(PHISH, PHISH_SOURCE)) writes++;
+        if (await writeWorkerIfChanged(PHISH_LAUNCHER, PHISH_LAUNCHER_SOURCE))
+            writes++;
+        if (await writeWorkerIfChanged(RAM_LAUNCHER, RAM_LAUNCHER_SOURCE))
+            writes++;
+        if (await writeWorkerIfChanged(RAM_WORKER, RAM_WORKER_SOURCE)) writes++;
+        if (await writeWorkerIfChanged(STASIS, STASIS_SOURCE)) writes++;
+        if (await writeWorkerIfChanged(LOOT, LOOT_SOURCE)) writes++;
         if (!ns.fileExists(PLAN, "home"))
             await ns.write(
                 PLAN,
@@ -1662,17 +1727,19 @@ function decodeBinary(data) {
                 "w"
             );
         if (!ns.fileExists(DB_FILE, "home")) await ns.write(DB_FILE, "{}", "w");
+        return writes;
     }
 
     async function resetPhishPlan() {
+        const maxHosts = getConfiguredPhishHosts();
         await ns.write(
             PHISH_PLAN,
             JSON.stringify({
                 desired: [],
                 ts: Date.now(),
-                maxHosts: configuredPhishHosts,
+                maxHosts: maxHosts,
                 version: VERSION,
-                reason: configuredPhishHosts > 0 ? "starting" : "disabled",
+                reason: maxHosts > 0 ? "starting" : "disabled",
             }),
             "w"
         );
@@ -1816,7 +1883,60 @@ function decodeBinary(data) {
     let crawlWasRunning = false;
     let currentCrawlId = "";
     let descendantDrainNoticeShown = false;
-    let nextCrawlAt = 0;
+    let crawlDepthLimit = CRAWL_DEPTH_STEP;
+    let minimumNextCrawlAt = 0;
+    let mutationSerial = 0;
+    let requiredMutationSerial = 0;
+    let mutationWatchPending = false;
+
+    /**
+     * Keep exactly one event listener armed. nextMutation() is an engine
+     * promise, so this replaces timer-only rescanning without adding a worker
+     * process or a polling loop.
+     */
+    function armMutationWatch() {
+        if (mutationWatchPending) return;
+        mutationWatchPending = true;
+        try {
+            void ns.dnet
+                .nextMutation()
+                .then(function () {
+                    mutationSerial++;
+                    mutationWatchPending = false;
+                })
+                .catch(function () {
+                    mutationWatchPending = false;
+                });
+        } catch {
+            mutationWatchPending = false;
+        }
+    }
+
+    /** Grow traversal by one official eight-row segment when needed. */
+    function deepenCrawlerIfNeeded(reports) {
+        const deepest = reports.reduce(function (maximum, report) {
+            return Math.max(maximum, Number(report.depth ?? -1));
+        }, -1);
+        if (
+            deepest < crawlDepthLimit - 1 ||
+            crawlDepthLimit >= OFFICIAL_MAX_NET_DEPTH
+        ) {
+            return false;
+        }
+        crawlDepthLimit = Math.min(
+            OFFICIAL_MAX_NET_DEPTH,
+            crawlDepthLimit + CRAWL_DEPTH_STEP
+        );
+        log(
+            "LIMIT  | crawler depth expanded to " +
+                crawlDepthLimit +
+                " after reaching row " +
+                deepest +
+                ".",
+            false
+        );
+        return true;
+    }
 
     async function seedDarkweb(reports) {
         let running = null;
@@ -1856,7 +1976,8 @@ function decodeBinary(data) {
                 crawlWasRunning = false;
                 currentCrawlId = "";
                 descendantDrainNoticeShown = false;
-                nextCrawlAt = 0;
+                minimumNextCrawlAt = 0;
+                requiredMutationSerial = 0;
             }
         } catch {
             // Intentionally ignored: this operation is best-effort.
@@ -1883,16 +2004,24 @@ function decodeBinary(data) {
             crawlWasRunning = false;
             currentCrawlId = "";
             descendantDrainNoticeShown = false;
-            nextCrawlAt = Date.now() + CRAWL_RESTART_DELAY_MS;
+            deepenCrawlerIfNeeded(reports);
+            minimumNextCrawlAt = Date.now() + MIN_RESCAN_QUIET_MS;
+            requiredMutationSerial = mutationSerial + 1;
+            armMutationWatch();
             log(
-                "Bounded crawl completed; next mutation rescan in " +
-                    Math.floor(CRAWL_RESTART_DELAY_MS / 1000) +
-                    " seconds.",
+                "CRAWL  | complete; waiting for the next mutation and a " +
+                    Math.floor(MIN_RESCAN_QUIET_MS / 1000) +
+                    "s quiet window.",
                 false
             );
             return false;
         }
-        if (Date.now() < nextCrawlAt) return false;
+        if (
+            Date.now() < minimumNextCrawlAt ||
+            mutationSerial < requiredMutationSerial
+        ) {
+            return false;
+        }
 
         let auth;
         try {
@@ -1922,17 +2051,29 @@ function decodeBinary(data) {
                 "darkweb",
                 "home"
             );
-            const pid = ns.exec(AGENT, "darkweb", 1, "", VERSION, crawlId, 0);
+            const pid = ns.exec(
+                AGENT,
+                "darkweb",
+                1,
+                "",
+                VERSION,
+                crawlId,
+                0,
+                "",
+                crawlDepthLimit
+            );
             if (pid) {
                 crawlWasRunning = true;
                 currentCrawlId = crawlId;
                 descendantDrainNoticeShown = false;
                 log(
-                    "Started bounded serial crawl on darkweb (PID " +
+                    "CRAWL  | started on darkweb; pid=" +
                         pid +
-                        ", stack cap " +
-                        MAX_CRAWL_STACK +
-                        ").",
+                        ", depth-limit=" +
+                        crawlDepthLimit +
+                        ", process-limit=" +
+                        (crawlDepthLimit + 1) +
+                        ".",
                     false
                 );
             }
@@ -1980,9 +2121,43 @@ function decodeBinary(data) {
         }
     }
 
+    // Monotonic totals for this manager run. Each worker has a unique heartbeat
+    // file, allowing rotations to contribute their final counters permanently.
+    const phishWorkerCounters = new Map();
+    const phishSessionTotals = {
+        attackCycles: 0,
+        successfulAttacks: 0,
+        errorCount: 0,
+        charismaXpEarned: 0,
+    };
+
+    function observePhishCounters(heartbeats) {
+        for (const heartbeat of heartbeats) {
+            if (heartbeat.version !== VERSION) continue;
+            const workerId = String(
+                heartbeat.workerId ||
+                    heartbeat.host + ":legacy:" + heartbeat.startedAt
+            );
+            const previous = phishWorkerCounters.get(workerId) || {
+                attackCycles: 0,
+                successfulAttacks: 0,
+                errorCount: 0,
+                charismaXpEarned: 0,
+            };
+            for (const field of Object.keys(phishSessionTotals)) {
+                const current = Math.max(0, Number(heartbeat[field] || 0));
+                const old = Math.max(0, Number(previous[field] || 0));
+                phishSessionTotals[field] += Math.max(0, current - old);
+                previous[field] = Math.max(old, current);
+            }
+            phishWorkerCounters.set(workerId, previous);
+        }
+    }
+
     function readPhishHeartbeats() {
         const now = Date.now();
         const latest = new Map();
+        const all = [];
         try {
             for (const file of ns.ls("home", PHISH_HEARTBEAT_PREFIX)) {
                 try {
@@ -1995,6 +2170,7 @@ function decodeBinary(data) {
                         ns.rm(file, "home");
                         continue;
                     }
+                    all.push(heartbeat);
                     const old = latest.get(heartbeat.host);
                     if (
                         !old ||
@@ -2009,6 +2185,7 @@ function decodeBinary(data) {
         } catch {
             // Intentionally ignored: an empty result is safe and self-correcting.
         }
+        observePhishCounters(all);
         return Array.from(latest.values()).filter(function (heartbeat) {
             const state = String(heartbeat.state || "");
             return (
@@ -2062,6 +2239,14 @@ function decodeBinary(data) {
     let phishCircuitOpen = false;
     async function updatePhishingPlan(db, reports) {
         const now = Date.now();
+        const configuredPhishHosts = getConfiguredPhishHosts();
+        let linked = [];
+        try {
+            linked = ns.dnet.getStasisLinkedServers(false);
+        } catch {
+            // With no authoritative link list, starting new workers is unsafe.
+        }
+        const linkedHosts = new Set(linked);
         const latest = new Map();
         for (const report of reports) {
             if (
@@ -2069,6 +2254,7 @@ function decodeBinary(data) {
                 !report.host ||
                 report.host === "darkweb" ||
                 report.isStationary ||
+                !linkedHosts.has(report.host) ||
                 report.agentVersion !== VERSION ||
                 now - Number(report.ts || 0) > REPORT_FRESH_MS
             ) {
@@ -2089,13 +2275,17 @@ function decodeBinary(data) {
                 now - Number(report.ts || 0) <= REPORT_FRESH_MS
             );
         }).length;
-        const overloaded = activeCrawlerCount > MAX_CRAWL_STACK;
+        const currentCrawlProcessLimit = Math.min(
+            MAX_CRAWL_STACK,
+            crawlDepthLimit + 1
+        );
+        const overloaded = activeCrawlerCount > currentCrawlProcessLimit;
         if (overloaded && !phishCircuitOpen) {
             log(
                 "Crawler safety circuit opened: " +
                     activeCrawlerCount +
                     " active stack reports exceeds the hard cap of " +
-                    MAX_CRAWL_STACK +
+                    currentCrawlProcessLimit +
                     ".",
                 true
             );
@@ -2120,7 +2310,7 @@ function decodeBinary(data) {
 
         const previous = readCurrentPhishPlan();
         const oldDesired = Array.isArray(previous.desired)
-            ? previous.desired.slice(0, PHISH_HOST_HARD_LIMIT)
+            ? previous.desired.slice(0, OFFICIAL_MAX_STASIS_LINKS)
             : [];
         const changed = JSON.stringify(oldDesired) !== JSON.stringify(desired);
         const needsRepush = now - Number(previous.ts || 0) >= PHISH_REPUSH_MS;
@@ -2143,7 +2333,7 @@ function decodeBinary(data) {
                 ? "crawler-stack-circuit-breaker"
                 : configuredPhishHosts === 0
                   ? "disabled"
-                  : "bounded",
+                  : "stasis-backed",
         };
         await ns.write(PHISH_PLAN, JSON.stringify(plan), "w");
 
@@ -2163,11 +2353,13 @@ function decodeBinary(data) {
 
         if (changed) {
             log(
-                "Phishing plan -> [" +
-                    desired.join(", ") +
-                    "] (hard cap " +
-                    PHISH_HOST_HARD_LIMIT +
-                    ").",
+                "PLAN   | phishing=" +
+                    (desired.length > 0 ? desired.join(", ") : "off") +
+                    " (" +
+                    desired.length +
+                    "/" +
+                    configuredPhishHosts +
+                    " stasis-backed hosts).",
                 false
             );
         }
@@ -2243,7 +2435,18 @@ function decodeBinary(data) {
             if (typeof password !== "string") continue;
             await pushPlanFiles(h, password);
         }
-        if (changed) log("Stasis plan -> [" + desired.join(", ") + "]", false);
+        if (changed) {
+            log(
+                "PLAN   | stasis=" +
+                    (desired.length > 0 ? desired.join(", ") : "none") +
+                    " (" +
+                    desired.length +
+                    "/" +
+                    limit +
+                    " live links).",
+                false
+            );
+        }
     }
 
     async function summary(db, reports) {
@@ -2283,24 +2486,11 @@ function decodeBinary(data) {
         ) {
             return total + Number(heartbeat.threads || 0);
         }, 0);
-        const phishAttackCycles = phishHeartbeats.reduce(function (
-            total,
-            heartbeat
-        ) {
-            return total + Number(heartbeat.attackCycles || 0);
-        }, 0);
-        const phishSuccessfulAttacks = phishHeartbeats.reduce(function (
-            total,
-            heartbeat
-        ) {
-            return total + Number(heartbeat.successfulAttacks || 0);
-        }, 0);
-        const phishCharismaXp = phishHeartbeats.reduce(function (
-            total,
-            heartbeat
-        ) {
-            return total + Number(heartbeat.charismaXpEarned || 0);
-        }, 0);
+        // These are manager-session totals, not a sum of only the workers that
+        // happen to be alive right now. They therefore never decrease.
+        const phishAttackCycles = phishSessionTotals.attackCycles;
+        const phishSuccessfulAttacks = phishSessionTotals.successfulAttacks;
+        const phishCharismaXp = phishSessionTotals.charismaXpEarned;
         const unauthorizedPhishHeartbeats = phishHeartbeats
             .filter(function (heartbeat) {
                 return !phishPlan.desired.includes(heartbeat.host);
@@ -2323,6 +2513,18 @@ function decodeBinary(data) {
         const passwordAuthTimeouts = list.reduce(function (sum, report) {
             return sum + Number(report.authTimeouts || 0);
         }, 0);
+        const passwordAuthPending = Math.max(
+            0,
+            passwordAuthCalls -
+                passwordAuthSuccesses -
+                passwordAuthFailures -
+                passwordAuthTimeouts
+        );
+        const configuredPhishHosts = getConfiguredPhishHosts();
+        const currentCrawlProcessLimit = Math.min(
+            MAX_CRAWL_STACK,
+            crawlDepthLimit + 1
+        );
         const phases = {};
         for (const report of list) {
             const name = String(report.phase || "unknown");
@@ -2335,7 +2537,9 @@ function decodeBinary(data) {
             charisma: Number(ns.getPlayer().skills.charisma || 0),
             activeAgents: activeCrawlReports.length,
             crawlerStack: activeCrawlReports.length,
-            crawlerStackLimit: MAX_CRAWL_STACK,
+            crawlerStackLimit: currentCrawlProcessLimit,
+            crawlerDepthLimit: crawlDepthLimit,
+            officialMaxCrawlerDepth: OFFICIAL_MAX_NET_DEPTH,
             freshHosts: list.length,
             discoveredHosts: Object.keys(db).length,
             knownHosts: Object.keys(db).length,
@@ -2350,13 +2554,15 @@ function decodeBinary(data) {
             phishAttackCyclesReported: phishAttackCycles,
             phishSuccessfulAttacksReported: phishSuccessfulAttacks,
             phishCharismaXpReported: phishCharismaXp,
-            phishTelemetry: "worker-heartbeat",
+            phishErrorsReported: phishSessionTotals.errorCount,
+            phishTelemetry: "manager-session worker-heartbeat deltas",
             phishHeartbeats: phishHeartbeats,
             unauthorizedPhishHeartbeats: unauthorizedPhishHeartbeats,
             passwordAuthCallsReported: passwordAuthCalls,
             passwordAuthSuccessesReported: passwordAuthSuccesses,
             passwordAuthFailuresReported: passwordAuthFailures,
             passwordAuthTimeoutsReported: passwordAuthTimeouts,
+            passwordAuthPendingReported: passwordAuthPending,
             phases: phases,
             stasis: linked,
             agents: list.map(function (report) {
@@ -2372,6 +2578,7 @@ function decodeBinary(data) {
                     loopCount: Number(report.loopCount || 0),
                     crawlId: String(report.crawlId || ""),
                     crawlDepth: Number(report.crawlDepth || 0),
+                    crawlDepthLimit: Number(report.crawlDepthLimit || 0),
                     completed: !!report.completed,
                     phishPid: Number(report.phishPid || 0),
                     phishThreads: Number(report.phishThreads || 0),
@@ -2387,109 +2594,137 @@ function decodeBinary(data) {
         }
 
         log(
-            "crawler stack=" +
+            "STATUS | crawl=" +
                 activeCrawlReports.length +
                 "/" +
-                MAX_CRAWL_STACK +
-                " | fresh hosts=" +
+                currentCrawlProcessLimit +
+                " processes (depth " +
+                crawlDepthLimit +
+                "/" +
+                OFFICIAL_MAX_NET_DEPTH +
+                ") | network=" +
                 list.length +
-                " | known passwords=" +
+                " fresh, " +
                 Object.keys(db).length +
-                " | password auth=" +
-                passwordAuthCalls +
-                " calls (" +
+                " credentials, " +
+                ramText +
+                " | stasis=" +
+                linked.length +
+                "/" +
+                getLiveStasisLimit(),
+            false
+        );
+        log(
+            "YIELD  | auth=" +
                 passwordAuthSuccesses +
-                " success, " +
+                "/" +
+                passwordAuthCalls +
+                " success (" +
                 passwordAuthFailures +
                 " wrong, " +
                 passwordAuthTimeouts +
-                " timeout)" +
-                " | discovered Dark Net RAM=" +
-                ramText +
-                " | phishing=" +
+                " timeout, " +
+                passwordAuthPending +
+                " pending) | phish=" +
                 phishHostsRunning.length +
                 "/" +
                 configuredPhishHosts +
-                " hosts (" +
+                " hosts, " +
                 phishThreads +
                 " threads, " +
-                phishAttackCycles +
-                " attack cycles, " +
                 phishSuccessfulAttacks +
-                " successful, " +
+                "/" +
+                phishAttackCycles +
+                " success, ~" +
                 Math.round(phishCharismaXp).toLocaleString("en-US") +
-                " CHA XP since worker start; heartbeat)" +
-                (unauthorizedPhishHeartbeats.length > 0
-                    ? " | phish safety correction=" +
-                      unauthorizedPhishHeartbeats.join(",")
+                " CHA XP this run" +
+                (phishSessionTotals.errorCount > 0
+                    ? ", " + phishSessionTotals.errorCount + " errors"
                     : "") +
-                " | stasis=" +
-                linked.length +
-                " [" +
-                linked.join(", ") +
-                "]",
+                (unauthorizedPhishHeartbeats.length > 0
+                    ? " | correcting=" + unauthorizedPhishHeartbeats.join(",")
+                    : ""),
             false
         );
     }
 
     await enforceSingleManager();
-    await writeWorkers();
+    const generatedWorkerChanges = await writeWorkers();
     const agentRam = ns.getScriptRam(AGENT, "home");
     const db = loadDb();
+    const deepestKnownRow = Object.values(db).reduce(function (deepest, entry) {
+        return Math.max(deepest, Number((entry && entry.depth) ?? -1));
+    }, -1);
+    crawlDepthLimit = Math.min(
+        OFFICIAL_MAX_NET_DEPTH,
+        Math.max(
+            CRAWL_DEPTH_STEP,
+            Math.ceil((deepestKnownRow + 2) / CRAWL_DEPTH_STEP) *
+                CRAWL_DEPTH_STEP
+        )
+    );
     clearPhishHeartbeats();
     await resetPhishPlan();
     const stoppedLegacyPhish = stopKnownPhishing(db);
-    log("Dark Net manager started. Persistent credential DB: " + DB_FILE, true);
-    log(
-        "Generated bounded crawler/RAM/loot/phishing/stasis workers automatically under /Temp.",
-        true
-    );
-    log(
-        "Crawler safety: one advancing branch, stack hard cap " +
-            MAX_CRAWL_STACK +
-            ", " +
-            Math.floor(CRAWL_RESTART_DELAY_MS / 1000) +
-            " second rescan delay.",
-        true
-    );
-    log(
-        "Phishing safety: " +
-            configuredPhishHosts +
-            " authorized host(s) maximum, 5-8 second worker cooldown; " +
-            "direct worker heartbeat telemetry." +
-            (stoppedLegacyPhish > 0
-                ? " Stopped " +
-                  stoppedLegacyPhish +
-                  " pre-existing phishing process(es)."
-                : ""),
-        true
-    );
-    log(
-        "Generated crawler RAM: " +
-            ns.format.ram(agentRam) +
-            " (darkweb capacity: 16 GB).",
-        true
-    );
+    const configuredPhishHosts = getConfiguredPhishHosts();
+    let gatewayRam = 16;
+    let gatewayUsedRam = 0;
     try {
-        const dwMax = ns.getServerMaxRam("darkweb");
-        const dwUsed = ns.getServerUsedRam("darkweb");
-        log(
-            "darkweb RAM now: max=" +
-                ns.format.ram(dwMax) +
-                " | used=" +
-                ns.format.ram(dwUsed) +
-                " | free=" +
-                ns.format.ram(Math.max(0, dwMax - dwUsed)) +
-                ".",
-            true
-        );
+        gatewayRam = Number(ns.getServerMaxRam("darkweb") || 16);
+        gatewayUsedRam = Number(ns.getServerUsedRam("darkweb") || 0);
     } catch {
-        // Intentionally ignored: this operation is best-effort.
+        // The official gateway capacity is 16 GB; runtime data is preferred.
     }
 
-    if (!(agentRam > 0) || agentRam > 16) {
+    log(
+        "START  | credentials=" +
+            DB_FILE +
+            " | repaired-workers=" +
+            generatedWorkerChanges +
+            " | previous-phish-stopped=" +
+            stoppedLegacyPhish,
+        true
+    );
+    log(
+        "LIMIT  | crawler=serial, depth " +
+            crawlDepthLimit +
+            "/" +
+            OFFICIAL_MAX_NET_DEPTH +
+            ", max " +
+            (crawlDepthLimit + 1) +
+            " processes | rescan=next mutation + " +
+            Math.floor(MIN_RESCAN_QUIET_MS / 1000) +
+            "s quiet window",
+        true
+    );
+    log(
+        "LIMIT  | phishing=" +
+            configuredPhishHosts +
+            " stasis-backed host(s), auto threads from exact free RAM" +
+            (requestedPhishHostLimit < 0 ? " (automatic)" : " (requested)") +
+            " | action pacing=game-native 0.2-10s",
+        true
+    );
+    log(
+        "RAM    | crawler=" +
+            ns.format.ram(agentRam) +
+            " | darkweb=" +
+            ns.format.ram(gatewayUsedRam) +
+            "/" +
+            ns.format.ram(gatewayRam) +
+            " used (" +
+            ns.format.ram(Math.max(0, gatewayRam - gatewayUsedRam)) +
+            " free)",
+        true
+    );
+
+    if (!(agentRam > 0) || agentRam > gatewayRam) {
         log(
-            "ERROR: generated crawler exceeds the 16 GB darkweb gateway limit; refusing to start.",
+            "ERROR  | crawler requires " +
+                ns.format.ram(agentRam) +
+                ", exceeding darkweb's " +
+                ns.format.ram(gatewayRam) +
+                "; refusing to start.",
             true
         );
         return;
@@ -2499,6 +2734,8 @@ function decodeBinary(data) {
     let lastPhish = 0;
     let lastSummary = 0;
     let lastWorkerRefresh = Date.now();
+    let lastReportRefresh = 0;
+    let reports = [];
     let warnedNoDnet = false;
 
     for (;;) {
@@ -2522,24 +2759,29 @@ function decodeBinary(data) {
                 continue;
             }
             warnedNoDnet = false;
+            armMutationWatch();
 
             if (Date.now() - lastWorkerRefresh >= WORKER_REFRESH_MS) {
                 await writeWorkers();
                 lastWorkerRefresh = Date.now();
             }
 
-            const reports = readReports();
-            await ingestReports(db, reports);
-            await seedDarkweb(reports);
-
-            if (Date.now() - lastPhish >= PHISH_REFRESH_MS) {
-                await updatePhishingPlan(db, reports);
-                lastPhish = Date.now();
+            if (Date.now() - lastReportRefresh >= REPORT_INTERVAL_MS) {
+                reports = readReports();
+                await ingestReports(db, reports);
+                lastReportRefresh = Date.now();
             }
+            await seedDarkweb(reports);
 
             if (Date.now() - lastStasis >= STASIS_REFRESH_MS) {
                 await updateStasisPlan(db, reports);
                 lastStasis = Date.now();
+            }
+
+            // Phishing follows the actual stasis links, so plan stasis first.
+            if (Date.now() - lastPhish >= PHISH_REFRESH_MS) {
+                await updatePhishingPlan(db, reports);
+                lastPhish = Date.now();
             }
 
             if (Date.now() - lastSummary >= SUMMARY_INTERVAL_MS) {
@@ -2547,9 +2789,9 @@ function decodeBinary(data) {
                 lastSummary = Date.now();
             }
         } catch (e) {
-            log("Suppressed manager error: " + String(e), false);
+            log("ERROR  | suppressed manager exception: " + String(e), false);
         }
 
-        await ns.sleep(5000);
+        await ns.sleep(CONTROL_TICK_MS);
     }
 }

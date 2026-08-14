@@ -17,7 +17,7 @@ const VISIT_MARKER = "/Temp/dnet-crawl-marker.txt";
 const PLAN = "/Temp/dnet-stasis-plan.txt";
 const PHISH_PLAN = "/Temp/dnet-phish-plan.txt";
 const DB_FILE = "darknet-passwords.txt";
-const VERSION = "1.2.3";
+const VERSION = "1.3.0";
 const CRAWL_ID = "crawler-bound-test";
 const GRAPH = {
     darkweb: ["alpha", "beta"],
@@ -215,7 +215,7 @@ filesFor("darkweb").set(
 filesFor("darkweb").set(DB_FILE, "{}");
 filesFor("darkweb").set(VISIT_MARKER, CRAWL_ID);
 
-const rootPid = spawnAgent("darkweb", 1, ["", VERSION, CRAWL_ID, 0]);
+const rootPid = spawnAgent("darkweb", 1, ["", VERSION, CRAWL_ID, 0, "", 8]);
 const rootProcess = processesFor("darkweb").get(rootPid);
 await rootProcess.promise;
 
@@ -231,7 +231,7 @@ if (maxAuthInFlight !== 1) {
         `expected one advancing authentication branch, observed ${maxAuthInFlight}`
     );
 }
-if (maxAgentProcesses > 17) {
+if (maxAgentProcesses > 9) {
     throw new Error(`crawler stack exceeded hard cap: ${maxAgentProcesses}`);
 }
 if (countAgents() !== 0) {
