@@ -1,0 +1,75 @@
+name: Fix Dark Net crawler RAM collision
+on:
+  push:
+    paths:
+      - '.github/workflows/fix-attempt-ram.yml'
+permissions:
+  contents: write
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Patch and validate
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re, subprocess, tempfile
+
+          p = Path('darknet-manager.js')
+          s = p.read_text(encoding='utf-8')
+
+          if 'const VERSION = "1.0.3";' not in s:
+              raise SystemExit('Expected version 1.0.3 not found')
+          s = s.replace('const VERSION = "1.0.3";', 'const VERSION = "1.0.4";', 1)
+
+          before = s.count('attempt(')
+          if before == 0:
+              raise SystemExit('No attempt( identifiers found to rename')
+          s = s.replace('attempt(', 'tryPassword(')
+
+          # Add useful gateway diagnostics once, at startup.
+          marker = 'log("Generated crawler RAM: " + ns.format.ram(agentRam) + " (darkweb capacity: 16 GB).", true);'
+          replacement = marker + '\n    try {\n        const dwMax = ns.getServerMaxRam("darkweb");\n        const dwUsed = ns.getServerUsedRam("darkweb");\n        log("darkweb RAM now: max=" + ns.format.ram(dwMax) + " | used=" + ns.format.ram(dwUsed) + " | free=" + ns.format.ram(Math.max(0, dwMax - dwUsed)) + ".", true);\n    } catch { }'
+          if marker not in s:
+              raise SystemExit('Startup RAM marker not found')
+          s = s.replace(marker, replacement, 1)
+
+          p.write_text(s, encoding='utf-8')
+
+          subprocess.run(['node', '--check', 'darknet-manager.js'], check=True)
+
+          text = p.read_text(encoding='utf-8')
+          blocks = re.findall(r'const\s+([A-Z_]+_SOURCE)\s*=\s*String\.raw`(.*?)`;', text, re.S)
+          if not blocks:
+              raise SystemExit('No generated worker blocks found')
+          for name, src in blocks:
+              with tempfile.NamedTemporaryFile('w', suffix='.js', delete=False, encoding='utf-8') as f:
+                  f.write(src)
+                  path = f.name
+              subprocess.run(['node', '--check', path], check=True)
+              print('Syntax OK:', name)
+
+          agent = dict(blocks).get('AGENT_SOURCE', '')
+          if not agent:
+              raise SystemExit('AGENT_SOURCE not found')
+          if re.search(r'\battempt\s*\(', agent):
+              raise SystemExit('Bare attempt() identifier still exists in AGENT_SOURCE')
+          if 'async function tryPassword(' not in agent:
+              raise SystemExit('tryPassword() function was not created')
+
+          # This 10GB collision is the specific defect being fixed.
+          print('Renamed', before, 'attempt( references to tryPassword(')
+          print('Validation complete')
+          PY
+      - name: Commit fix
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add darknet-manager.js
+          git commit -m 'Fix 10GB RAM name collision in Dark Net crawler'
+          git push
