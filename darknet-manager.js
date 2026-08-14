@@ -36,7 +36,7 @@ export async function main(ns) {
     } catch {
         // Intentionally ignored: this operation is best-effort.
     }
-    const VERSION = "1.2.1";
+    const VERSION = "1.2.2";
 
     const AGENT = "/Temp/dnet-agent.js";
     const PHISH = "/Temp/dnet-phish.js";
@@ -315,10 +315,10 @@ export async function main(ns) {
         if (Date.now() - Number(plan.ts || 0) > 90000) return;
         if (!plan.desired.includes(host)) return;
         if (ns.ps(host).some(function (p) { return p.filename === PHISH; })) return;
-        const ram = ns.getScriptRam(PHISH, host);
-        if (!(ram > 0)) return;
+        const scriptRam = ns.getScriptRam(PHISH, host);
+        if (!(scriptRam > 0)) return;
         const free = Math.max(0, ns.getServerMaxRam(host) - ns.getServerUsedRam(host));
-        const threads = Math.floor((free * 0.65) / ram);
+        const threads = Math.floor((free * 0.65) / scriptRam);
         if (threads > 0) ns.exec(PHISH, host, threads, "managed");
     } catch {
         // Intentionally ignored: this operation is best-effort.
@@ -348,7 +348,7 @@ export async function main(ns) {
 
     const host = ns.getHostname();
     const selfPassword = String(ns.args[0] ?? "");
-    const AGENT_VERSION = "1.2.1";
+    const AGENT_VERSION = "1.2.2";
     const crawlId = String(ns.args[2] ?? "");
     const crawlDepth = Math.max(0, Math.floor(Number(ns.args[3] || 0)));
     const parentCompletionFile = String(ns.args[4] ?? "");
@@ -770,9 +770,9 @@ function decodeBinary(data) {
             const r = await tryPassword(target, c.repeat(n), true);
             if (r.success) return c.repeat(n);
             if (!r.feedback || typeof r.feedback.data !== "string") return null;
-            const flags = r.feedback.data.split(",");
-            for (let i = 0; i < Math.min(n, flags.length); i++) {
-                if (flags[i] === "yes") result[i] = c;
+            const feedbackFlags = r.feedback.data.split(",");
+            for (let i = 0; i < Math.min(n, feedbackFlags.length); i++) {
+                if (feedbackFlags[i] === "yes") result[i] = c;
             }
             if (result.every(function (x) { return x !== null; })) break;
         }
@@ -1156,7 +1156,7 @@ function decodeBinary(data) {
                 }),
                 "w"
             );
-            for (let attempt = 0; attempt < MAX_COMPLETION_SIGNAL_ATTEMPTS; attempt++) {
+            for (let signalTry = 0; signalTry < MAX_COMPLETION_SIGNAL_ATTEMPTS; signalTry++) {
                 let copied = false;
                 try { copied = await ns.scp(parentCompletionFile, "home", host); }
                 catch {
@@ -1953,8 +1953,8 @@ function decodeBinary(data) {
         phishCircuitOpen = overloaded;
 
         const candidates = Array.from(latest.values()).sort(function (a, b) {
-            const ram = Number(b.maxRam || 0) - Number(a.maxRam || 0);
-            if (ram !== 0) return ram;
+            const ramDelta = Number(b.maxRam || 0) - Number(a.maxRam || 0);
+            if (ramDelta !== 0) return ramDelta;
             return String(a.host).localeCompare(String(b.host));
         });
         const desired =
@@ -2034,8 +2034,8 @@ function decodeBinary(data) {
         }
 
         const candidates = Array.from(latest.values()).sort(function (a, b) {
-            const ram = Number(b.maxRam || 0) - Number(a.maxRam || 0);
-            if (ram !== 0) return ram;
+            const ramDelta = Number(b.maxRam || 0) - Number(a.maxRam || 0);
+            if (ramDelta !== 0) return ramDelta;
             const blocked =
                 Number(a.blockedRam || 0) - Number(b.blockedRam || 0);
             if (blocked !== 0) return blocked;

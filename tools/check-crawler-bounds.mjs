@@ -17,7 +17,7 @@ const VISIT_MARKER = "/Temp/dnet-crawl-marker.txt";
 const PLAN = "/Temp/dnet-stasis-plan.txt";
 const PHISH_PLAN = "/Temp/dnet-phish-plan.txt";
 const DB_FILE = "darknet-passwords.txt";
-const VERSION = "1.2.1";
+const VERSION = "1.2.2";
 const CRAWL_ID = "crawler-bound-test";
 const GRAPH = {
     darkweb: ["alpha", "beta"],

@@ -11,7 +11,7 @@ export async function main(ns) {
         // Intentionally ignored: this operation is best-effort.
     }
 
-    const VERSION = "1.2.1";
+    const VERSION = "1.2.2";
     const MAX_CRAWL_STACK = 17;
     const DB_FILE = "darknet-passwords.txt";
     const REPORT_PREFIX = "/Temp/dnet-report-";
