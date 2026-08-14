@@ -12,6 +12,7 @@ const RUNTIME_FILES = [
     "darknet-manager.js",
     "darknet-cleanup.js",
     "darknet-snapshot.js",
+    "alain-silence-misfires.js",
 ];
 
 export function autocomplete(data) {
@@ -229,6 +230,7 @@ function printHelp(ns) {
     ns.tprint("  darknet-manager.js");
     ns.tprint("  darknet-cleanup.js");
     ns.tprint("  darknet-snapshot.js");
+    ns.tprint("  alain-silence-misfires.js");
     ns.tprint(`  ${UPDATER_FILE} (unless --no-self is supplied)`);
     ns.tprint("");
     ns.tprint(

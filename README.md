@@ -28,6 +28,7 @@ The updater downloads these runtime files directly from the `main` branch:
 - `darknet-manager.js`
 - `darknet-cleanup.js`
 - `darknet-snapshot.js`
+- `alain-silence-misfires.js`
 - `dnet-git-pull.js`
 
 After the first install, updating is simply:
@@ -73,6 +74,23 @@ automatically. If `darknet-manager.js` was already running during an update,
 run `darknet-cleanup.js` before starting the newly downloaded manager. The
 cleanup stops only this project's manager and generated workers; it does not
 stop Alain's `autopilot.js` or other unrelated scripts.
+
+## Silence Alain batch misfire toasts
+
+Alain's `daemon.js` already supports a persistent `silent-misfires` option. To
+enable it without modifying Alain's source files or losing other daemon
+settings, run:
+
+```text
+run alain-silence-misfires.js
+```
+
+The helper merges `"silent-misfires": true` into
+`daemon.js.config.txt`. If `autopilot.js` is running, the helper stops only the
+current `daemon.js`; autopilot then relaunches it with the persistent option.
+If daemon is running without autopilot, the helper restarts it while preserving
+its arguments. Already-scheduled hack/grow/weaken workers may display a few
+final toasts before completing.
 
 ## Runtime
 
