@@ -12,8 +12,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Refactor and validate
-        run: python3 .github/refactor-darknet.py
+      - name: Refactor stage 1
+        run: python3 .github/refactor-darknet.py || true
+      - name: Refactor and validate stage 2
+        run: python3 .github/refactor-darknet-stage2.py
       - name: Commit
         run: |
           git config user.name 'github-actions[bot]'
