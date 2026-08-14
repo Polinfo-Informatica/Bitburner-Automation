@@ -36,7 +36,7 @@ export async function main(ns) {
     } catch {
         // Intentionally ignored: this operation is best-effort.
     }
-    const VERSION = "1.1.0";
+    const VERSION = "1.2.0";
 
     const AGENT = "/Temp/dnet-agent.js";
     const PHISH = "/Temp/dnet-phish.js";
@@ -50,6 +50,7 @@ export async function main(ns) {
     const DB_FILE = "darknet-passwords.txt";
     const REPORT_PREFIX = "/Temp/dnet-report-";
     const STATUS_FILE = "darknet-runtime-status.txt";
+    const VISIT_MARKER = "/Temp/dnet-crawl-marker.txt";
 
     const REPORT_FRESH_MS = 180000;
     const REPORT_RETENTION_MS = 600000;
@@ -58,7 +59,9 @@ export async function main(ns) {
     const PHISH_REFRESH_MS = 15000;
     const PHISH_REPUSH_MS = 45000;
     const PHISH_HOST_HARD_LIMIT = 4;
-    const MAX_EXPECTED_AGENTS = 64;
+    const MAX_CRAWL_DEPTH = 16;
+    const MAX_CRAWL_STACK = MAX_CRAWL_DEPTH + 1;
+    const CRAWL_RESTART_DELAY_MS = 120000;
     const SUMMARY_INTERVAL_MS = 30000;
     const WORKER_REFRESH_MS = 300000;
 
@@ -340,13 +343,17 @@ export async function main(ns) {
     const PHISH_PLAN = "/Temp/dnet-phish-plan.txt";
     const DB_FILE = "darknet-passwords.txt";
     const REPORT_PREFIX = "/Temp/dnet-report-";
+    const VISIT_MARKER = "/Temp/dnet-crawl-marker.txt";
 
     const host = ns.getHostname();
     const selfPassword = String(ns.args[0] ?? "");
-    const AGENT_VERSION = "1.1.0";
+    const AGENT_VERSION = "1.2.0";
+    const crawlId = String(ns.args[2] ?? "");
+    const crawlDepth = Math.max(0, Math.floor(Number(ns.args[3] || 0)));
     const REPORT_INTERVAL = 15000;
     const LOOT_INTERVAL = 60000;
-    const LOOP_INTERVAL = 8000;
+    const CHILD_POLL_MS = 2000;
+    const MAX_CRAWL_DEPTH = 16;
     const MIN_DNET_REQUEST_INTERVAL = 750;
     const MAX_AUTH_RETRIES = 4;
     const MAX_BRUTE_ATTEMPTS = 100;
@@ -391,6 +398,8 @@ export async function main(ns) {
     let authAttempts = 0;
     let loopCount = 0;
     let lastProgress = Date.now();
+    let selfDetails = null;
+    let lastNeighbors = [];
 
     function hashString(s) {
         let h = 2166136261 >>> 0;
@@ -1105,8 +1114,52 @@ function decodeBinary(data) {
         }
     }
 
-    async function deployChild(target, password) {
+    async function wasVisitedThisCrawl(target) {
+        if (!crawlId) return false;
+
         try {
+            if (!ns.fileExists(VISIT_MARKER, target)) return false;
+            await ns.write(VISIT_MARKER, crawlId, "w");
+            const copied = await ns.scp(VISIT_MARKER, host, target);
+            if (!copied) return false;
+            const targetCrawlId = String(ns.read(VISIT_MARKER) || "");
+            await ns.write(VISIT_MARKER, crawlId, "w");
+            return targetCrawlId === crawlId;
+        } catch {
+            try { await ns.write(VISIT_MARKER, crawlId, "w"); }
+            catch {
+        // Intentionally ignored: this operation is best-effort.
+    }
+            return false;
+        }
+    }
+
+    async function waitForChild(target, childPid) {
+        phase = "wait-child";
+        activeTarget = target;
+
+        for (;;) {
+            let running = false;
+            try {
+                running = ns.ps(target).some(function (process) {
+                    return process.pid === childPid;
+                });
+            } catch {
+                return;
+            }
+            if (!running) return;
+            if (Date.now() - lastReport >= REPORT_INTERVAL) {
+                await saveReport("");
+            }
+            await ns.sleep(CHILD_POLL_MS);
+        }
+    }
+
+    async function deployChild(target, password) {
+        if (!crawlId || crawlDepth >= MAX_CRAWL_DEPTH) return false;
+
+        try {
+            await ns.write(VISIT_MARKER, crawlId, "w");
             await ns.scp(
                 [
                     AGENT,
@@ -1118,7 +1171,8 @@ function decodeBinary(data) {
                     LOOT,
                     PLAN,
                     PHISH_PLAN,
-                    DB_FILE
+                    DB_FILE,
+                    VISIT_MARKER
                 ],
                 target,
                 host
@@ -1150,7 +1204,14 @@ function decodeBinary(data) {
             const managed = [AGENT, PHISH, PHISH_LAUNCHER, RAM_LAUNCHER, RAM_WORKER, STASIS, LOOT];
             const processes = ns.ps(target);
             const existing = processes.find(function (p) { return p.filename === AGENT; });
-            if (existing && String(existing.args && existing.args[1] || "") === AGENT_VERSION) return true;
+            if (
+                existing &&
+                String(existing.args && existing.args[1] || "") === AGENT_VERSION &&
+                String(existing.args && existing.args[2] || "") === crawlId
+            ) {
+                await waitForChild(target, existing.pid);
+                return true;
+            }
             for (const proc of processes) {
                 if (managed.includes(proc.filename)) {
                     try { ns.kill(proc.pid); } catch {
@@ -1163,8 +1224,23 @@ function decodeBinary(data) {
         // Intentionally ignored: this operation is best-effort.
     }
 
-        try { return ns.exec(AGENT, target, 1, password, AGENT_VERSION) !== 0; }
-        catch { return false; }
+        let childPid = 0;
+        try {
+            childPid = ns.exec(
+                AGENT,
+                target,
+                1,
+                password,
+                AGENT_VERSION,
+                crawlId,
+                crawlDepth + 1
+            );
+        } catch {
+            childPid = 0;
+        }
+        if (childPid === 0) return false;
+        await waitForChild(target, childPid);
+        return true;
     }
 
     async function lootSelf() {
@@ -1267,7 +1343,8 @@ function decodeBinary(data) {
 
     async function saveReport(errorText) {
         try {
-            const details = getDetails(host);
+            if (!selfDetails) selfDetails = getDetails(host);
+            const details = selfDetails;
             let phishPid = 0;
             let phishThreads = 0;
             let managedProcesses = 0;
@@ -1298,13 +1375,16 @@ function decodeBinary(data) {
                 activeTarget: activeTarget,
                 authAttempts: authAttempts,
                 loopCount: loopCount,
+                crawlId: crawlId,
+                crawlDepth: crawlDepth,
+                completed: phase === "complete" || phase === "failed",
                 lastProgress: lastProgress,
                 managedProcesses: managedProcesses,
                 phishPid: phishPid,
                 phishThreads: phishThreads,
                 requiredCharismaSkill: details ? Number(details.requiredCharismaSkill ?? -1) : -1,
                 isStationary: details ? !!details.isStationary : false,
-                neighbors: safeProbe(),
+                neighbors: lastNeighbors.slice(),
                 found: foundCredentials.slice(-25),
                 error: errorText ? String(errorText) : ""
             };
@@ -1317,32 +1397,32 @@ function decodeBinary(data) {
     }
     }
 
+    if (!crawlId || crawlDepth > MAX_CRAWL_DEPTH) return;
+    try { await ns.write(VISIT_MARKER, crawlId, "w"); }
+    catch { return; }
+
+    selfDetails = getDetails(host);
     phase = "initial-report";
     await saveReport("");
-    await ns.sleep(500 + (parseInt(hashString(host), 16) % 3500));
+    await ns.sleep(250 + (parseInt(hashString(host), 16) % 750));
 
-    for (;;) {
-        try {
-            loopCount++;
-            phase = "loot";
-            activeTarget = "";
-            await lootSelf();
+    try {
+        loopCount = 1;
+        phase = "loot";
+        activeTarget = "";
+        await lootSelf();
 
-            phase = "stasis";
-            if (await maybeToggleStasis()) return;
+        phase = "stasis";
+        await maybeToggleStasis();
 
-            phase = "probe";
-            const neighbors = safeProbe();
-            for (const target of neighbors) {
+        phase = "probe";
+        lastNeighbors = safeProbe();
+        if (crawlDepth < MAX_CRAWL_DEPTH) {
+            for (const target of lastNeighbors) {
                 if (target === host) continue;
                 activeTarget = target;
                 phase = "inspect";
-                let currentAgent = null;
-                try { currentAgent = ns.ps(target).find(function (p) { return p.filename === AGENT; }) || null; }
-                catch {
-        // Intentionally ignored: this operation is best-effort.
-                }
-                if (currentAgent && String(currentAgent.args && currentAgent.args[1] || "") === AGENT_VERSION) continue;
+                if (await wasVisitedThisCrawl(target)) continue;
 
                 phase = "solve";
                 const password = await solveTarget(target);
@@ -1351,22 +1431,18 @@ function decodeBinary(data) {
                 await deployChild(target, password);
                 lastProgress = Date.now();
             }
-
-            phase = "phish-control";
-            activeTarget = "";
-            ensurePhishing();
-            phase = "idle";
-            if (Date.now() - lastReport >= REPORT_INTERVAL) await saveReport("");
-        } catch (e) {
-            await saveReport(String(e));
         }
 
-        try {
-            // Wake quickly enough to catch mutations but don't busy-loop.
-            await ns.sleep(LOOP_INTERVAL);
-        } catch {
-        // Intentionally ignored: this operation is best-effort.
-    }
+        phase = "stasis";
+        activeTarget = "";
+        await maybeToggleStasis();
+        phase = "phish-control";
+        ensurePhishing();
+        phase = "complete";
+        await saveReport("");
+    } catch (e) {
+        phase = "failed";
+        await saveReport(String(e));
     }
 }
 `;
@@ -1581,16 +1657,22 @@ function decodeBinary(data) {
         if (changed) await saveDb(db);
     }
 
+    let crawlWasRunning = false;
+    let nextCrawlAt = 0;
+
     async function seedDarkweb() {
+        let running = null;
         try {
-            const running = ns.ps("darkweb").find(function (p) {
+            running = ns.ps("darkweb").find(function (p) {
                 return p.filename === AGENT;
             });
             if (
                 running &&
                 String((running.args && running.args[1]) || "") === VERSION
-            )
+            ) {
+                crawlWasRunning = true;
                 return true;
+            }
             if (running) {
                 try {
                     ns.kill(running.pid);
@@ -1598,10 +1680,26 @@ function decodeBinary(data) {
                     // Intentionally ignored: this operation is best-effort.
                 }
                 await ns.sleep(50);
+                running = null;
+                crawlWasRunning = false;
+                nextCrawlAt = 0;
             }
         } catch {
             // Intentionally ignored: this operation is best-effort.
         }
+
+        if (!running && crawlWasRunning) {
+            crawlWasRunning = false;
+            nextCrawlAt = Date.now() + CRAWL_RESTART_DELAY_MS;
+            log(
+                "Bounded crawl completed; next mutation rescan in " +
+                    Math.floor(CRAWL_RESTART_DELAY_MS / 1000) +
+                    " seconds.",
+                false
+            );
+            return false;
+        }
+        if (Date.now() < nextCrawlAt) return false;
 
         let auth;
         try {
@@ -1612,6 +1710,8 @@ function decodeBinary(data) {
         if (!auth || !auth.success) return false;
 
         try {
+            const crawlId = VERSION + ":" + Date.now().toString(36);
+            await ns.write(VISIT_MARKER, crawlId, "w");
             await ns.scp(
                 [
                     AGENT,
@@ -1624,16 +1724,23 @@ function decodeBinary(data) {
                     PLAN,
                     PHISH_PLAN,
                     DB_FILE,
+                    VISIT_MARKER,
                 ],
                 "darkweb",
                 "home"
             );
-            const pid = ns.exec(AGENT, "darkweb", 1, "", VERSION);
-            if (pid)
+            const pid = ns.exec(AGENT, "darkweb", 1, "", VERSION, crawlId, 0);
+            if (pid) {
+                crawlWasRunning = true;
                 log(
-                    "Seeded recursive crawler on darkweb (PID " + pid + ").",
+                    "Started bounded serial crawl on darkweb (PID " +
+                        pid +
+                        ", stack cap " +
+                        MAX_CRAWL_STACK +
+                        ").",
                     false
                 );
+            }
             return pid !== 0;
         } catch {
             return false;
@@ -1697,29 +1804,27 @@ function decodeBinary(data) {
             }
         }
 
-        const activeAgentCount = reports.filter(function (report) {
+        const activeCrawlerCount = reports.filter(function (report) {
             return (
                 report &&
                 report.host &&
                 report.agentVersion === VERSION &&
+                !report.completed &&
                 now - Number(report.ts || 0) <= REPORT_FRESH_MS
             );
         }).length;
-        const overloaded = activeAgentCount > MAX_EXPECTED_AGENTS;
+        const overloaded = activeCrawlerCount > MAX_CRAWL_STACK;
         if (overloaded && !phishCircuitOpen) {
             log(
-                "Phishing circuit opened: " +
-                    activeAgentCount +
-                    " fresh agent reports exceeds the safety limit of " +
-                    MAX_EXPECTED_AGENTS +
+                "Crawler safety circuit opened: " +
+                    activeCrawlerCount +
+                    " active stack reports exceeds the hard cap of " +
+                    MAX_CRAWL_STACK +
                     ".",
                 true
             );
         } else if (!overloaded && phishCircuitOpen) {
-            log(
-                "Phishing circuit recovered; bounded workers may resume.",
-                true
-            );
+            log("Crawler safety circuit recovered; phishing may resume.", true);
         }
         phishCircuitOpen = overloaded;
 
@@ -1751,7 +1856,7 @@ function decodeBinary(data) {
             maxHosts: configuredPhishHosts,
             version: VERSION,
             reason: overloaded
-                ? "agent-circuit-breaker"
+                ? "crawler-stack-circuit-breaker"
                 : configuredPhishHosts === 0
                   ? "disabled"
                   : "bounded",
@@ -1890,6 +1995,9 @@ function decodeBinary(data) {
         const phishThreads = phishReports.reduce(function (sum, report) {
             return sum + Number(report.phishThreads || 0);
         }, 0);
+        const activeCrawlReports = list.filter(function (report) {
+            return report.agentVersion === VERSION && !report.completed;
+        });
         const phases = {};
         for (const report of list) {
             const name = String(report.phase || "unknown");
@@ -1900,7 +2008,10 @@ function decodeBinary(data) {
             version: VERSION,
             ts: now,
             charisma: Number(ns.getPlayer().skills.charisma || 0),
-            activeAgents: list.length,
+            activeAgents: activeCrawlReports.length,
+            crawlerStack: activeCrawlReports.length,
+            crawlerStackLimit: MAX_CRAWL_STACK,
+            discoveredHosts: list.length,
             knownPasswords: Object.keys(db).length,
             discoveredRam: totalRam,
             managedProcessesReported: list.reduce(function (sum, report) {
@@ -1921,6 +2032,9 @@ function decodeBinary(data) {
                     activeTarget: String(report.activeTarget || ""),
                     authAttempts: Number(report.authAttempts || 0),
                     loopCount: Number(report.loopCount || 0),
+                    crawlId: String(report.crawlId || ""),
+                    crawlDepth: Number(report.crawlDepth || 0),
+                    completed: !!report.completed,
                     phishPid: Number(report.phishPid || 0),
                     phishThreads: Number(report.phishThreads || 0),
                     modelId: String(report.modelId || ""),
@@ -1935,7 +2049,11 @@ function decodeBinary(data) {
         }
 
         log(
-            "active agents=" +
+            "crawler stack=" +
+                activeCrawlReports.length +
+                "/" +
+                MAX_CRAWL_STACK +
+                " | discovered hosts=" +
                 list.length +
                 " | known passwords=" +
                 Object.keys(db).length +
@@ -1965,7 +2083,15 @@ function decodeBinary(data) {
     const stoppedLegacyPhish = stopKnownPhishing(db);
     log("Dark Net manager started. Persistent credential DB: " + DB_FILE, true);
     log(
-        "Generated crawler/RAM/loot/phishing/stasis workers automatically under /Temp.",
+        "Generated bounded crawler/RAM/loot/phishing/stasis workers automatically under /Temp.",
+        true
+    );
+    log(
+        "Crawler safety: one advancing branch, stack hard cap " +
+            MAX_CRAWL_STACK +
+            ", " +
+            Math.floor(CRAWL_RESTART_DELAY_MS / 1000) +
+            " second rescan delay.",
         true
     );
     log(
@@ -2004,7 +2130,7 @@ function decodeBinary(data) {
 
     if (!(agentRam > 0) || agentRam > 16) {
         log(
-            "ERROR: generated crawler exceeds the 16 GB darkweb gateway limit; refusing to retry-loop.",
+            "ERROR: generated crawler exceeds the 16 GB darkweb gateway limit; refusing to start.",
             true
         );
         return;

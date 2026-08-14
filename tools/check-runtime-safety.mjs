@@ -68,10 +68,25 @@ for (const required of [
     "await ns.sleep(cooldown)",
     "const MIN_DNET_REQUEST_INTERVAL = 750;",
     "const MAX_BRUTE_ATTEMPTS = 100;",
+    'const VISIT_MARKER = "/Temp/dnet-crawl-marker.txt";',
+    "const MAX_CRAWL_DEPTH = 16;",
+    "const MAX_CRAWL_STACK = MAX_CRAWL_DEPTH + 1;",
+    "const CRAWL_RESTART_DELAY_MS = 120000;",
+    "await waitForChild(target, childPid);",
+    'phase = "complete";',
 ]) {
     if (!manager.includes(required)) {
         fail(`bounded runtime guard is missing ${required}.`);
     }
+}
+
+if (manager.includes("const LOOP_INTERVAL")) {
+    fail(
+        "the generated crawler still contains the old permanent polling loop."
+    );
+}
+if (!snapshot.includes("counts.agents > MAX_CRAWL_STACK")) {
+    fail("the snapshot does not detect a crawler stack cap violation.");
 }
 
 if (!updater.includes('"darknet-snapshot.js"')) {
@@ -82,5 +97,5 @@ if (!snapshot.includes("unauthorizedPhishHosts")) {
 }
 
 console.log(
-    `Runtime safety check OK (runtime ${managerVersion}; bounded phishing/auth, singleton, diagnostics, and cleanup guards present).`
+    `Runtime safety check OK (runtime ${managerVersion}; serialized crawler, bounded phishing/auth, singleton, diagnostics, and cleanup guards present).`
 );

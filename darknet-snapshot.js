@@ -11,7 +11,8 @@ export async function main(ns) {
         // Intentionally ignored: this operation is best-effort.
     }
 
-    const VERSION = "1.1.0";
+    const VERSION = "1.2.0";
+    const MAX_CRAWL_STACK = 17;
     const DB_FILE = "darknet-passwords.txt";
     const REPORT_PREFIX = "/Temp/dnet-report-";
     const PHISH_PLAN = "/Temp/dnet-phish-plan.txt";
@@ -150,6 +151,9 @@ export async function main(ns) {
 
     const warnings = [];
     if (counts.managers > 1) warnings.push("multiple managers");
+    if (counts.agents > MAX_CRAWL_STACK) {
+        warnings.push("crawler stack hard cap exceeded");
+    }
     if (counts.phishing > 4) warnings.push("phishing host hard cap exceeded");
     if (desired.length > 4) warnings.push("phishing plan hard cap exceeded");
     if (unauthorizedPhishHosts.length > 0) {
@@ -187,6 +191,9 @@ export async function main(ns) {
                 activeTarget: String(report.activeTarget || ""),
                 authAttempts: Number(report.authAttempts || 0),
                 loopCount: Number(report.loopCount || 0),
+                crawlId: String(report.crawlId || ""),
+                crawlDepth: Number(report.crawlDepth || 0),
+                completed: !!report.completed,
                 phishPid: Number(report.phishPid || 0),
                 phishThreads: Number(report.phishThreads || 0),
                 modelId: String(report.modelId || ""),

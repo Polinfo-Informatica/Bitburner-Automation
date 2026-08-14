@@ -83,7 +83,10 @@ run darknet-cleanup.js
 run darknet-manager.js
 ```
 
-The manager generates its own worker scripts under `/Temp`.
+The manager generates its own worker scripts under `/Temp`. Dark Net discovery
+uses a serialized depth-first crawler: only one branch advances at a time,
+waiting parent agents do no Dark Net work, the traversal stack is capped at 17
+agents, and completed crawls pause for two minutes before rescanning mutations.
 
 Phishing is manager-controlled, limited to the four highest-RAM eligible
 servers, staggered, and rate-limited. To isolate the crawler with phishing

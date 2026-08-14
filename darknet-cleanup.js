@@ -14,7 +14,7 @@ export async function main(ns) {
         // Intentionally ignored: this operation is best-effort.
     }
 
-    const VERSION = "1.1.0";
+    const VERSION = "1.2.0";
     const DB_FILE = "darknet-passwords.txt";
     const REPORT_PREFIX = "/Temp/dnet-report-";
     const PHISH_PLAN = "/Temp/dnet-phish-plan.txt";
@@ -117,7 +117,7 @@ export async function main(ns) {
         if (pass < CLEANUP_PASSES) await ns.sleep(1000);
     }
 
-    // Any v1.1.0 worker that briefly survives a race sees an empty plan and
+    // Any v1.2.0 worker that briefly survives a race sees an empty plan and
     // refuses to start phishing when it next receives the home control file.
     try {
         await ns.write(
