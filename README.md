@@ -69,8 +69,9 @@ run dnet-git-pull.js --no-self
 The updater stages and validates downloads before overwriting the installed
 files. It deliberately does not kill, restart, or clean Dark Net processes
 automatically. If `darknet-manager.js` was already running during an update,
-stop it and run `darknet-cleanup.js` before starting the newly downloaded
-manager.
+run `darknet-cleanup.js` before starting the newly downloaded manager. The
+cleanup stops only this project's manager and generated workers; it does not
+stop Alain's `autopilot.js` or other unrelated scripts.
 
 ## Runtime
 

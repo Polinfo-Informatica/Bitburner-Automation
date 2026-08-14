@@ -24,7 +24,7 @@ export async function main(ns) {
     } catch {
         // Intentionally ignored: this operation is best-effort.
     }
-    const VERSION = "1.0.8";
+    const VERSION = "1.0.9";
 
     const AGENT = "/Temp/dnet-agent.js";
     const PHISH = "/Temp/dnet-phish.js";
@@ -256,7 +256,7 @@ export async function main(ns) {
 
     const host = ns.getHostname();
     const selfPassword = String(ns.args[0] ?? "");
-    const AGENT_VERSION = "1.0.8";
+    const AGENT_VERSION = "1.0.9";
     const REPORT_INTERVAL = 15000;
     const LOOT_INTERVAL = 60000;
     const LOOP_INTERVAL = 4000;
@@ -1173,6 +1173,38 @@ function decodeBinary(data) {
         if (terminal) ns.tprint(text);
     }
 
+    async function enforceSingleManager() {
+        const ownPid = ns.pid;
+        const ownScript = ns.getScriptName();
+        let killed = 0;
+
+        try {
+            for (const process of ns.ps("home")) {
+                if (process.pid === ownPid || process.filename !== ownScript) {
+                    continue;
+                }
+                try {
+                    if (ns.kill(process.pid)) killed++;
+                } catch {
+                    // Intentionally ignored: another process may have won the race.
+                }
+            }
+        } catch {
+            // Intentionally ignored: the manager will still start normally.
+        }
+
+        if (killed > 0) {
+            log(
+                "Stopped " +
+                    killed +
+                    " older manager instance(s) before starting.",
+                true
+            );
+            // Let killed instances finish cleanup before replacing their workers.
+            await ns.sleep(100);
+        }
+    }
+
     async function writeWorkers() {
         await ns.write(AGENT, AGENT_SOURCE, "w");
         await ns.write(PHISH, PHISH_SOURCE, "w");
@@ -1468,6 +1500,7 @@ function decodeBinary(data) {
         );
     }
 
+    await enforceSingleManager();
     await writeWorkers();
     const agentRam = ns.getScriptRam(AGENT, "home");
     const db = loadDb();

@@ -2,8 +2,8 @@
  * darknet-cleanup.js
  * One-shot cleanup utility for the custom Dark Net automation.
  *
- * Run this ONCE before switching from an older darknet-manager.js build to v1.0.5+.
- * It kills only the worker filenames owned by this project; unrelated scripts are left alone.
+ * Run this ONCE before switching from an older darknet-manager.js build to v1.0.9+.
+ * It kills only this project's manager/workers; unrelated scripts are left alone.
  *
  * @param {NS} ns
  */
@@ -16,6 +16,7 @@ export async function main(ns) {
 
     const DB_FILE = "darknet-passwords.txt";
     const REPORT_PREFIX = "/Temp/dnet-report-";
+    const MANAGER = "darknet-manager.js";
     const MANAGED = new Set([
         "/Temp/dnet-agent.js",
         "/Temp/dnet-phish.js",
@@ -72,6 +73,21 @@ export async function main(ns) {
     let processesKilled = 0;
     let offlineOrUnavailable = 0;
 
+    // A running pre-update manager immediately recreates the workers we kill below.
+    // Stop every manager instance first, while leaving Alain's autopilot untouched.
+    try {
+        for (const process of ns.ps("home")) {
+            if (process.filename !== MANAGER) continue;
+            try {
+                if (ns.kill(process.pid)) processesKilled++;
+            } catch {
+                // Intentionally ignored: another cleanup may have won the race.
+            }
+        }
+    } catch {
+        // Intentionally ignored: worker cleanup can still proceed.
+    }
+
     for (const [host, password] of targets) {
         hostsChecked++;
 
@@ -112,7 +128,7 @@ export async function main(ns) {
         }
     }
 
-    // Remove stale home-side reports so v1.0.5 starts with a clean topology view.
+    // Remove stale home-side reports so v1.0.9 starts with a clean topology view.
     let reportsRemoved = 0;
     try {
         for (const file of ns.ls("home", REPORT_PREFIX)) {
@@ -139,6 +155,6 @@ export async function main(ns) {
             reportsRemoved
     );
     ns.tprint(
-        "[DNET CLEANUP] Done. You can now run darknet-manager.js v1.0.5."
+        "[DNET CLEANUP] Done. You can now run darknet-manager.js v1.0.9."
     );
 }
