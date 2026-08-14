@@ -14,7 +14,7 @@ jobs:
           fetch-depth: 0
       - name: Apply patch
         run: python3 .github/stabilize_v105.py
-      - name: Resolve Bitburner RAM-name collision
+      - name: Resolve static-analysis findings
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -23,6 +23,8 @@ jobs:
           s = s.replace('function number() {', 'function parseAtom() {')
           s = s.replace('let v = number();', 'let v = parseAtom();')
           s = s.replace('const rhs = number();', 'const rhs = parseAtom();')
+          s = s.replace('let auth = null;', 'let auth;')
+          s = s.replace('let limit = 0;', 'let limit;')
           p.write_text(s, encoding='utf-8')
           PY
       - name: Fetch pinned Bitburner v3.0.1 types
