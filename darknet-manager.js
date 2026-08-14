@@ -24,7 +24,7 @@ export async function main(ns) {
     } catch {
         // Intentionally ignored: this operation is best-effort.
     }
-    const VERSION = "1.0.7";
+    const VERSION = "1.0.8";
 
     const AGENT = "/Temp/dnet-agent.js";
     const PHISH = "/Temp/dnet-phish.js";
@@ -256,7 +256,7 @@ export async function main(ns) {
 
     const host = ns.getHostname();
     const selfPassword = String(ns.args[0] ?? "");
-    const AGENT_VERSION = "1.0.7";
+    const AGENT_VERSION = "1.0.8";
     const REPORT_INTERVAL = 15000;
     const LOOT_INTERVAL = 60000;
     const LOOP_INTERVAL = 4000;
@@ -439,22 +439,34 @@ export async function main(ns) {
     }
 
     function largestPrimeFactor(value) {
-        let n;
-        try { n = BigInt(String(value).trim()); }
-        catch { return null; }
-        if (n < 2n) return n.toString();
-        let largest = 1n;
-        while (n % 2n === 0n) { largest = 2n; n /= 2n; }
-        let f = 3n;
-        while (f * f <= n) {
-            while (n % f === 0n) { largest = f; n /= f; }
-            f += 2n;
+    let n;
+    try {
+        n = BigInt(String(value).trim());
+    } catch {
+        return null;
+    }
+    if (n < 2n) return n.toString();
+
+    // Bitburner v3.0.1 constructs PrimeTime 2 targets from exactly one
+    // known large prime multiplied by a small number of SMALL_PRIMES.
+    // Strip those small factors instead of trial-dividing every odd
+    // integer up to sqrt(n), which can freeze the game's UI thread.
+    let largest = 1n;
+    for (const prime of SMALL_PRIMES) {
+        const p = BigInt(prime);
+        while (n % p === 0n) {
+            largest = p;
+            n /= p;
         }
-        if (n > 1n) largest = n;
-        return largest.toString();
     }
 
-    function decodeBinary(data) {
+    // After the small factors are removed, v3.0.1 guarantees the
+    // remainder is the generated large prime.
+    if (n > largest) largest = n;
+    return largest.toString();
+}
+
+function decodeBinary(data) {
         try {
             return String(data).trim().split(/\s+/).map(function (b) {
                 return String.fromCharCode(parseInt(b, 2));

@@ -23,7 +23,7 @@ for (const { pattern, message } of forbiddenPatterns) {
 }
 
 const agentMatch = source.match(
-    /const AGENT_SOURCE = String\.raw`([\s\S]*?)`;\r?\n\r?\n {4}function log\(/,
+    /const AGENT_SOURCE = String\.raw`([\s\S]*?)`;\r?\n\r?\n {4}function log\(/
 );
 if (!agentMatch) {
     console.error("Could not extract AGENT_SOURCE from darknet-manager.js");
@@ -52,14 +52,16 @@ for (let i = braceStart; i < agentSource.length; i++) {
 }
 
 if (functionEnd < 0) {
-    console.error("Could not parse largestPrimeFactor() from the generated agent.");
+    console.error(
+        "Could not parse largestPrimeFactor() from the generated agent."
+    );
     process.exit(1);
 }
 
 const functionSource = agentSource.slice(functionStart, functionEnd);
 const smallPrimes = [
-    2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61,
-    67, 71, 73, 79, 83, 89, 97,
+    2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71,
+    73, 79, 83, 89, 97,
 ];
 const largePrimes = [
     1069, 1409, 1471, 1567, 1597, 1601, 1697, 1747, 1801, 1889, 1979, 1999,
@@ -74,7 +76,7 @@ const largePrimes = [
 const buildSolver = new Function(
     "SMALL_PRIMES",
     "LARGE_PRIMES",
-    `${functionSource}; return largestPrimeFactor;`,
+    `${functionSource}; return largestPrimeFactor;`
 );
 const solve = buildSolver(smallPrimes, largePrimes);
 
@@ -90,7 +92,7 @@ for (const test of cases) {
     const actual = solve(test.target.toString());
     if (actual !== test.expected.toString()) {
         console.error(
-            `Prime solver failed for ${test.target}: expected ${test.expected}, got ${actual}`,
+            `Prime solver failed for ${test.target}: expected ${test.expected}, got ${actual}`
         );
         process.exit(1);
     }
@@ -99,9 +101,11 @@ const elapsed = performance.now() - start;
 
 if (elapsed > 100) {
     console.error(
-        `Prime solver regression: deterministic test cases took ${elapsed.toFixed(2)} ms.`,
+        `Prime solver regression: deterministic test cases took ${elapsed.toFixed(2)} ms.`
     );
     process.exit(1);
 }
 
-console.log(`CPU hazard check OK; prime solver tests completed in ${elapsed.toFixed(2)} ms.`);
+console.log(
+    `CPU hazard check OK; prime solver tests completed in ${elapsed.toFixed(2)} ms.`
+);
