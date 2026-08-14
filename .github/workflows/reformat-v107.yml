@@ -1,0 +1,56 @@
+name: Reformat v1.0.7
+on:
+  push:
+    paths:
+      - '.github/workflows/reformat-v107.yml'
+permissions:
+  contents: write
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Bump runtime version
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('darknet-manager.js')
+          s = p.read_text(encoding='utf-8')
+          if '"1.0.6"' not in s:
+              raise SystemExit('Expected v1.0.6 runtime')
+          s = s.replace('"1.0.6"', '"1.0.7"')
+          p.write_text(s, encoding='utf-8')
+          PY
+      - name: Pin quality tool versions
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          const lock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
+          for (const name of Object.keys(pkg.devDependencies || {})) {
+            const entry = lock.packages['node_modules/' + name];
+            if (!entry || !entry.version) throw new Error('Missing locked version for ' + name);
+            pkg.devDependencies[name] = entry.version;
+          }
+          fs.writeFileSync('package.json', JSON.stringify(pkg, null, 4) + '\n');
+          NODE
+          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+      - name: Format all maintained sources
+        run: npm run format
+      - name: Run complete quality gate
+        run: npm run check
+      - name: Commit aligned sources
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add darknet-manager.js darknet-cleanup.js package.json package-lock.json .prettierrc.json .editorconfig .vscode eslint.config.mjs tools
+          git diff --cached --quiet && exit 0
+          git commit -m "Align formatter and pin quality tools for v1.0.7"
+          git push
