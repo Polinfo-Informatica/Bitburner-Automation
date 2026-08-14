@@ -2,6 +2,8 @@ import fs from "node:fs";
 
 const manager = fs.readFileSync("darknet-manager.js", "utf8");
 const cleanup = fs.readFileSync("darknet-cleanup.js", "utf8");
+const snapshot = fs.readFileSync("darknet-snapshot.js", "utf8");
+const updater = fs.readFileSync("dnet-git-pull.js", "utf8");
 
 function fail(message) {
     console.error(`Runtime safety check failed: ${message}`);
@@ -10,9 +12,16 @@ function fail(message) {
 
 const managerVersion = manager.match(/const VERSION = "([^"]+)";/)?.[1];
 const agentVersion = manager.match(/const AGENT_VERSION = "([^"]+)";/)?.[1];
-if (!managerVersion || managerVersion !== agentVersion) {
+const cleanupVersion = cleanup.match(/const VERSION = "([^"]+)";/)?.[1];
+const snapshotVersion = snapshot.match(/const VERSION = "([^"]+)";/)?.[1];
+if (
+    !managerVersion ||
+    managerVersion !== agentVersion ||
+    managerVersion !== cleanupVersion ||
+    managerVersion !== snapshotVersion
+) {
     fail(
-        `manager version (${managerVersion ?? "missing"}) does not match generated agent version (${agentVersion ?? "missing"}).`
+        `runtime versions differ (manager=${managerVersion ?? "missing"}, agent=${agentVersion ?? "missing"}, cleanup=${cleanupVersion ?? "missing"}, snapshot=${snapshotVersion ?? "missing"}).`
     );
 }
 
@@ -40,7 +49,7 @@ for (const required of [
 
 const managerKill = cleanup.indexOf("ns.kill(process.pid)");
 const workerCleanup = cleanup.indexOf(
-    "for (const [host, password] of targets)"
+    "for (let pass = 1; pass <= CLEANUP_PASSES; pass++)"
 );
 if (!cleanup.includes('const MANAGER = "darknet-manager.js";')) {
     fail("darknet-cleanup.js does not identify the manager filename.");
@@ -48,7 +57,30 @@ if (!cleanup.includes('const MANAGER = "darknet-manager.js";')) {
 if (managerKill < 0 || workerCleanup < 0 || managerKill > workerCleanup) {
     fail("cleanup must stop old managers before cleaning remote workers.");
 }
+if (!cleanup.includes("const CLEANUP_PASSES = 4;")) {
+    fail("cleanup must perform multiple stabilization passes.");
+}
+
+for (const required of [
+    "const PHISH_HOST_HARD_LIMIT = 4;",
+    "const MIN_COOLDOWN_MS = 5000;",
+    "plan.desired.length > 4",
+    "await ns.sleep(cooldown)",
+    "const MIN_DNET_REQUEST_INTERVAL = 750;",
+    "const MAX_BRUTE_ATTEMPTS = 100;",
+]) {
+    if (!manager.includes(required)) {
+        fail(`bounded runtime guard is missing ${required}.`);
+    }
+}
+
+if (!updater.includes('"darknet-snapshot.js"')) {
+    fail("the updater does not install darknet-snapshot.js.");
+}
+if (!snapshot.includes("unauthorizedPhishHosts")) {
+    fail("the snapshot does not detect phishing outside the manager plan.");
+}
 
 console.log(
-    `Runtime safety check OK (manager/agent ${managerVersion}; singleton and cleanup guards present).`
+    `Runtime safety check OK (runtime ${managerVersion}; bounded phishing/auth, singleton, diagnostics, and cleanup guards present).`
 );

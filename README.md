@@ -27,6 +27,7 @@ The updater downloads these runtime files directly from the `main` branch:
 
 - `darknet-manager.js`
 - `darknet-cleanup.js`
+- `darknet-snapshot.js`
 - `dnet-git-pull.js`
 
 After the first install, updating is simply:
@@ -83,3 +84,18 @@ run darknet-manager.js
 ```
 
 The manager generates its own worker scripts under `/Temp`.
+
+Phishing is manager-controlled, limited to the four highest-RAM eligible
+servers, staggered, and rate-limited. To isolate the crawler with phishing
+fully disabled, start it with:
+
+```text
+run darknet-manager.js --no-phish
+```
+
+To capture a one-shot runtime diagnosis while the manager is running:
+
+```text
+run darknet-snapshot.js
+cat darknet-diagnostic-snapshot.txt
+```

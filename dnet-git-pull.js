@@ -7,7 +7,11 @@ const ARGS_SCHEMA = [
 const GITHUB_OWNER = "Polinfo-Informatica";
 const GITHUB_REPOSITORY = "Bitburner-Automation";
 const UPDATER_FILE = "dnet-git-pull.js";
-const RUNTIME_FILES = ["darknet-manager.js", "darknet-cleanup.js"];
+const RUNTIME_FILES = [
+    "darknet-manager.js",
+    "darknet-cleanup.js",
+    "darknet-snapshot.js",
+];
 
 export function autocomplete(data, _args) {
     data.flags(ARGS_SCHEMA);
@@ -223,6 +227,7 @@ function printHelp(ns) {
     ns.tprint("Downloads:");
     ns.tprint("  darknet-manager.js");
     ns.tprint("  darknet-cleanup.js");
+    ns.tprint("  darknet-snapshot.js");
     ns.tprint(`  ${UPDATER_FILE} (unless --no-self is supplied)`);
     ns.tprint("");
     ns.tprint(

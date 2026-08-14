@@ -13,6 +13,7 @@
     "include": [
         "darknet-manager.js",
         "darknet-cleanup.js",
+        "darknet-snapshot.js",
         "types/global.d.ts",
         "types/NetscriptDefinitions.d.ts"
     ],

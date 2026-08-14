@@ -1,3 +1,14 @@
+const ARGS_SCHEMA = [
+    ["no-phish", false],
+    ["phish-hosts", 4],
+    ["help", false],
+];
+
+export function autocomplete(data, _args) {
+    data.flags(ARGS_SCHEMA);
+    return [];
+}
+
 /**
  * darknet-manager.js
  * Bitburner 3.0.1 Dark Net automation
@@ -24,7 +35,7 @@ export async function main(ns) {
     } catch {
         // Intentionally ignored: this operation is best-effort.
     }
-    const VERSION = "1.0.9";
+    const VERSION = "1.1.0";
 
     const AGENT = "/Temp/dnet-agent.js";
     const PHISH = "/Temp/dnet-phish.js";
@@ -34,15 +45,45 @@ export async function main(ns) {
     const STASIS = "/Temp/dnet-stasis.js";
     const LOOT = "/Temp/dnet-loot.js";
     const PLAN = "/Temp/dnet-stasis-plan.txt";
+    const PHISH_PLAN = "/Temp/dnet-phish-plan.txt";
     const DB_FILE = "darknet-passwords.txt";
     const REPORT_PREFIX = "/Temp/dnet-report-";
+    const STATUS_FILE = "darknet-runtime-status.txt";
 
     const REPORT_FRESH_MS = 180000;
     const REPORT_RETENTION_MS = 600000;
     const STASIS_REFRESH_MS = 30000;
     const STASIS_REPUSH_MS = 300000;
+    const PHISH_REFRESH_MS = 15000;
+    const PHISH_REPUSH_MS = 45000;
+    const PHISH_HOST_HARD_LIMIT = 4;
+    const MAX_EXPECTED_AGENTS = 64;
     const SUMMARY_INTERVAL_MS = 30000;
     const WORKER_REFRESH_MS = 300000;
+
+    const options = ns.flags(ARGS_SCHEMA);
+    if (options.help) {
+        ns.tprint("Bitburner Dark Net manager v" + VERSION);
+        ns.tprint(
+            "Usage: run darknet-manager.js [--no-phish] [--phish-hosts 0-4]"
+        );
+        ns.tprint(
+            "Phishing is capped at four manager-selected hosts and is rate-limited."
+        );
+        return;
+    }
+    const requestedPhishHosts = Number(options["phish-hosts"]);
+    const configuredPhishHosts = options["no-phish"]
+        ? 0
+        : Math.max(
+              0,
+              Math.min(
+                  PHISH_HOST_HARD_LIMIT,
+                  Number.isFinite(requestedPhishHosts)
+                      ? Math.floor(requestedPhishHosts)
+                      : PHISH_HOST_HARD_LIMIT
+              )
+          );
 
     // Keep all generated-worker code free of template literals so it can live safely
     // inside these String.raw blocks.
@@ -52,11 +93,47 @@ export async function main(ns) {
     try { ns.disableLog("ALL"); } catch {
         // Intentionally ignored: this operation is best-effort.
     }
+    const PLAN = "/Temp/dnet-phish-plan.txt";
+    const host = ns.getHostname();
+    const MAX_PLAN_AGE_MS = 90000;
+    const MIN_COOLDOWN_MS = 5000;
+
+    function hostHash(value) {
+        let hash = 2166136261 >>> 0;
+        for (let i = 0; i < value.length; i++) {
+            hash ^= value.charCodeAt(i);
+            hash = Math.imul(hash, 16777619);
+        }
+        return hash >>> 0;
+    }
+
+    function isAllowed() {
+        try {
+            const raw = ns.read(PLAN);
+            if (!raw) return false;
+            const plan = JSON.parse(raw);
+            if (!plan || !Array.isArray(plan.desired)) return false;
+            if (plan.desired.length > 4) return false;
+            if (Date.now() - Number(plan.ts || 0) > MAX_PLAN_AGE_MS) return false;
+            return plan.desired.includes(host);
+        } catch { return false; }
+    }
+
+    const stagger = 750 + (hostHash(host) % 4250);
+    const cooldown = MIN_COOLDOWN_MS + (hostHash(host + ":cooldown") % 3000);
+    await ns.sleep(stagger);
+
     for (;;) {
+        if (!isAllowed()) return;
         try {
             await ns.dnet.phishingAttack();
         } catch {
-            await ns.sleep(1000);
+        // Intentionally ignored: the explicit cooldown below still applies.
+        }
+        try {
+            await ns.sleep(cooldown);
+        } catch {
+            return;
         }
     }
 }
@@ -221,10 +298,18 @@ export async function main(ns) {
         // Intentionally ignored: this operation is best-effort.
     }
     const PHISH = "/Temp/dnet-phish.js";
+    const PLAN = "/Temp/dnet-phish-plan.txt";
     const host = ns.getHostname();
     if (host === "darkweb") return;
 
     try {
+        const raw = ns.read(PLAN);
+        if (!raw) return;
+        const plan = JSON.parse(raw);
+        if (!plan || !Array.isArray(plan.desired)) return;
+        if (plan.desired.length > 4) return;
+        if (Date.now() - Number(plan.ts || 0) > 90000) return;
+        if (!plan.desired.includes(host)) return;
         if (ns.ps(host).some(function (p) { return p.filename === PHISH; })) return;
         const ram = ns.getScriptRam(PHISH, host);
         if (!(ram > 0)) return;
@@ -251,17 +336,19 @@ export async function main(ns) {
     const STASIS = "/Temp/dnet-stasis.js";
     const LOOT = "/Temp/dnet-loot.js";
     const PLAN = "/Temp/dnet-stasis-plan.txt";
+    const PHISH_PLAN = "/Temp/dnet-phish-plan.txt";
     const DB_FILE = "darknet-passwords.txt";
     const REPORT_PREFIX = "/Temp/dnet-report-";
 
     const host = ns.getHostname();
     const selfPassword = String(ns.args[0] ?? "");
-    const AGENT_VERSION = "1.0.9";
+    const AGENT_VERSION = "1.1.0";
     const REPORT_INTERVAL = 15000;
     const LOOT_INTERVAL = 60000;
-    const LOOP_INTERVAL = 4000;
+    const LOOP_INTERVAL = 8000;
+    const MIN_DNET_REQUEST_INTERVAL = 750;
     const MAX_AUTH_RETRIES = 4;
-    const MAX_BRUTE_ATTEMPTS = 1000;
+    const MAX_BRUTE_ATTEMPTS = 100;
 
     const DEFAULT_PASSWORDS = ["admin", "password", "0000", "12345"];
     const DOG_NAMES = ["fido", "spot", "rover", "max"];
@@ -297,6 +384,12 @@ export async function main(ns) {
     const cooldownUntil = new Map();
     let lastReport = 0;
     let lastLoot = 0;
+    let lastDnetRequest = 0;
+    let phase = "starting";
+    let activeTarget = "";
+    let authAttempts = 0;
+    let loopCount = 0;
+    let lastProgress = Date.now();
 
     function hashString(s) {
         let h = 2166136261 >>> 0;
@@ -375,8 +468,18 @@ export async function main(ns) {
         }
     }
 
+    async function waitForDnetSlot() {
+        const wait =
+            MIN_DNET_REQUEST_INTERVAL - (Date.now() - lastDnetRequest);
+        if (wait > 0) await ns.sleep(wait);
+        lastDnetRequest = Date.now();
+    }
+
     async function heartbleedFeedback(target, attempted, count) {
         try {
+            await waitForDnetSlot();
+            phase = "heartbleed";
+            activeTarget = target;
             const hb = await ns.dnet.heartbleed(target, { peek: false, logsToCapture: count || 3 });
             if (!hb || !hb.success || !Array.isArray(hb.logs)) return null;
             harvestRawLogCredentials(target, hb.logs);
@@ -395,7 +498,15 @@ export async function main(ns) {
         let last = null;
         for (let retry = 0; retry < MAX_AUTH_RETRIES; retry++) {
             try {
+                await waitForDnetSlot();
+                phase = "authenticate";
+                activeTarget = target;
+                authAttempts++;
+                if (Date.now() - lastReport >= REPORT_INTERVAL) {
+                    await saveReport("");
+                }
                 const r = await ns.dnet.authenticate(target, password);
+                lastProgress = Date.now();
                 last = r;
                 if (r && r.success) return { success: true, password: password, feedback: null };
                 // 408 = Request Timeout. Retry without consuming puzzle logic.
@@ -807,6 +918,9 @@ function decodeBinary(data) {
         await tryPassword(target, "", true);
         for (let round = 0; round < 20; round++) {
             try {
+                await waitForDnetSlot();
+                phase = "heartbleed";
+                activeTarget = target;
                 const hb = await ns.dnet.heartbleed(target, { peek: false, logsToCapture: 8 });
                 if (hb && hb.success && Array.isArray(hb.logs)) {
                     harvestRawLogCredentials(target, hb.logs);
@@ -993,7 +1107,18 @@ function decodeBinary(data) {
     async function deployChild(target, password) {
         try {
             await ns.scp(
-                [AGENT, PHISH, PHISH_LAUNCHER, RAM_LAUNCHER, RAM_WORKER, STASIS, LOOT, PLAN, DB_FILE],
+                [
+                    AGENT,
+                    PHISH,
+                    PHISH_LAUNCHER,
+                    RAM_LAUNCHER,
+                    RAM_WORKER,
+                    STASIS,
+                    LOOT,
+                    PLAN,
+                    PHISH_PLAN,
+                    DB_FILE
+                ],
                 target,
                 host
             );
@@ -1061,6 +1186,18 @@ function decodeBinary(data) {
         } catch { return null; }
     }
 
+    function readPhishPlan() {
+        try {
+            const raw = ns.read(PHISH_PLAN);
+            if (!raw) return null;
+            const plan = JSON.parse(raw);
+            if (!plan || !Array.isArray(plan.desired)) return null;
+            if (plan.desired.length > 4) return null;
+            if (Date.now() - Number(plan.ts || 0) > 90000) return null;
+            return plan;
+        } catch { return null; }
+    }
+
     async function maybeToggleStasis() {
         if (host === "darkweb") return false;
 
@@ -1092,10 +1229,36 @@ function decodeBinary(data) {
 
     function ensurePhishing() {
         try {
-            const busy = ns.ps(host).some(function (p) {
-                return p.filename === PHISH || p.filename === PHISH_LAUNCHER;
+            const plan = readPhishPlan();
+            const allowed =
+                host !== "darkweb" && plan && plan.desired.includes(host);
+            const processes = ns.ps(host);
+            const phishing = processes.filter(function (p) {
+                return p.filename === PHISH;
             });
-            if (!busy) ns.exec(PHISH_LAUNCHER, host, 1);
+            const launchers = processes.filter(function (p) {
+                return p.filename === PHISH_LAUNCHER;
+            });
+
+            if (!allowed) {
+                for (const process of phishing.concat(launchers)) {
+                    try { ns.kill(process.pid); }
+                    catch {
+        // Intentionally ignored: this operation is best-effort.
+    }
+                }
+                return;
+            }
+
+            for (const duplicate of phishing.slice(1).concat(launchers.slice(1))) {
+                try { ns.kill(duplicate.pid); }
+                catch {
+        // Intentionally ignored: this operation is best-effort.
+    }
+            }
+            if (phishing.length === 0 && launchers.length === 0) {
+                ns.exec(PHISH_LAUNCHER, host, 1);
+            }
         } catch {
         // Intentionally ignored: this operation is best-effort.
     }
@@ -1104,6 +1267,21 @@ function decodeBinary(data) {
     async function saveReport(errorText) {
         try {
             const details = getDetails(host);
+            let phishPid = 0;
+            let phishThreads = 0;
+            let managedProcesses = 0;
+            try {
+                const managed = [AGENT, PHISH, PHISH_LAUNCHER, RAM_LAUNCHER, RAM_WORKER, STASIS, LOOT];
+                for (const process of ns.ps(host)) {
+                    if (managed.includes(process.filename)) managedProcesses++;
+                    if (process.filename === PHISH) {
+                        phishPid = Number(process.pid || 0);
+                        phishThreads += Number(process.threads || 0);
+                    }
+                }
+            } catch {
+        // Intentionally ignored: this operation is best-effort.
+    }
             const report = {
                 ts: Date.now(),
                 host: host,
@@ -1115,6 +1293,14 @@ function decodeBinary(data) {
                 difficulty: details ? Number(details.difficulty ?? -1) : -1,
                 modelId: details ? String(details.modelId || "") : "",
                 agentVersion: AGENT_VERSION,
+                phase: phase,
+                activeTarget: activeTarget,
+                authAttempts: authAttempts,
+                loopCount: loopCount,
+                lastProgress: lastProgress,
+                managedProcesses: managedProcesses,
+                phishPid: phishPid,
+                phishThreads: phishThreads,
                 requiredCharismaSkill: details ? Number(details.requiredCharismaSkill ?? -1) : -1,
                 isStationary: details ? !!details.isStationary : false,
                 neighbors: safeProbe(),
@@ -1130,28 +1316,45 @@ function decodeBinary(data) {
     }
     }
 
+    phase = "initial-report";
+    await saveReport("");
+    await ns.sleep(500 + (parseInt(hashString(host), 16) % 3500));
+
     for (;;) {
         try {
+            loopCount++;
+            phase = "loot";
+            activeTarget = "";
             await lootSelf();
 
+            phase = "stasis";
             if (await maybeToggleStasis()) return;
 
+            phase = "probe";
             const neighbors = safeProbe();
             for (const target of neighbors) {
                 if (target === host) continue;
+                activeTarget = target;
+                phase = "inspect";
                 let currentAgent = null;
                 try { currentAgent = ns.ps(target).find(function (p) { return p.filename === AGENT; }) || null; }
                 catch {
         // Intentionally ignored: this operation is best-effort.
-    }
+                }
                 if (currentAgent && String(currentAgent.args && currentAgent.args[1] || "") === AGENT_VERSION) continue;
 
+                phase = "solve";
                 const password = await solveTarget(target);
                 if (password === null) continue;
+                phase = "deploy";
                 await deployChild(target, password);
+                lastProgress = Date.now();
             }
 
+            phase = "phish-control";
+            activeTarget = "";
             ensurePhishing();
+            phase = "idle";
             if (Date.now() - lastReport >= REPORT_INTERVAL) await saveReport("");
         } catch (e) {
             await saveReport(String(e));
@@ -1219,7 +1422,67 @@ function decodeBinary(data) {
                 JSON.stringify({ desired: [], ts: Date.now() }),
                 "w"
             );
+        if (!ns.fileExists(PHISH_PLAN, "home"))
+            await ns.write(
+                PHISH_PLAN,
+                JSON.stringify({ desired: [], ts: Date.now(), maxHosts: 0 }),
+                "w"
+            );
         if (!ns.fileExists(DB_FILE, "home")) await ns.write(DB_FILE, "{}", "w");
+    }
+
+    async function resetPhishPlan() {
+        await ns.write(
+            PHISH_PLAN,
+            JSON.stringify({
+                desired: [],
+                ts: Date.now(),
+                maxHosts: configuredPhishHosts,
+                version: VERSION,
+                reason: configuredPhishHosts > 0 ? "starting" : "disabled",
+            }),
+            "w"
+        );
+    }
+
+    function stopKnownPhishing(db) {
+        const targets = new Set(["darkweb"].concat(Object.keys(db)));
+        try {
+            for (const file of ns.ls("home", REPORT_PREFIX)) {
+                try {
+                    const report = JSON.parse(ns.read(file));
+                    if (report && typeof report.host === "string") {
+                        targets.add(report.host);
+                    }
+                } catch {
+                    // Intentionally ignored: this operation is best-effort.
+                }
+            }
+        } catch {
+            // Intentionally ignored: this operation is best-effort.
+        }
+
+        let killed = 0;
+        for (const target of targets) {
+            try {
+                for (const process of ns.ps(target)) {
+                    if (
+                        process.filename !== PHISH &&
+                        process.filename !== PHISH_LAUNCHER
+                    ) {
+                        continue;
+                    }
+                    try {
+                        if (ns.kill(process.pid)) killed++;
+                    } catch {
+                        // Intentionally ignored: this operation is best-effort.
+                    }
+                }
+            } catch {
+                // Intentionally ignored: this operation is best-effort.
+            }
+        }
+        return killed;
     }
 
     function loadDb() {
@@ -1358,6 +1621,7 @@ function decodeBinary(data) {
                     STASIS,
                     LOOT,
                     PLAN,
+                    PHISH_PLAN,
                     DB_FILE,
                 ],
                 "darkweb",
@@ -1384,6 +1648,140 @@ function decodeBinary(data) {
         } catch {
             return false;
         }
+    }
+
+    function readCurrentPhishPlan() {
+        try {
+            const raw = ns.read(PHISH_PLAN);
+            if (!raw) return { desired: [], ts: 0 };
+            const plan = JSON.parse(raw);
+            if (!plan || !Array.isArray(plan.desired)) {
+                return { desired: [], ts: 0 };
+            }
+            return plan;
+        } catch {
+            return { desired: [], ts: 0 };
+        }
+    }
+
+    async function pushPhishPlanFiles(host, password) {
+        try {
+            const session = ns.dnet.connectToSession(host, password);
+            if (!session || !session.success) return false;
+            await ns.scp([PHISH_PLAN, PHISH, PHISH_LAUNCHER], host, "home");
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
+    let phishCircuitOpen = false;
+    async function updatePhishingPlan(db, reports) {
+        const now = Date.now();
+        const latest = new Map();
+        for (const report of reports) {
+            if (
+                !report ||
+                !report.host ||
+                report.host === "darkweb" ||
+                report.isStationary ||
+                report.agentVersion !== VERSION ||
+                now - Number(report.ts || 0) > REPORT_FRESH_MS
+            ) {
+                continue;
+            }
+            const old = latest.get(report.host);
+            if (!old || Number(report.ts || 0) > Number(old.ts || 0)) {
+                latest.set(report.host, report);
+            }
+        }
+
+        const activeAgentCount = reports.filter(function (report) {
+            return (
+                report &&
+                report.host &&
+                report.agentVersion === VERSION &&
+                now - Number(report.ts || 0) <= REPORT_FRESH_MS
+            );
+        }).length;
+        const overloaded = activeAgentCount > MAX_EXPECTED_AGENTS;
+        if (overloaded && !phishCircuitOpen) {
+            log(
+                "Phishing circuit opened: " +
+                    activeAgentCount +
+                    " fresh agent reports exceeds the safety limit of " +
+                    MAX_EXPECTED_AGENTS +
+                    ".",
+                true
+            );
+        } else if (!overloaded && phishCircuitOpen) {
+            log(
+                "Phishing circuit recovered; bounded workers may resume.",
+                true
+            );
+        }
+        phishCircuitOpen = overloaded;
+
+        const candidates = Array.from(latest.values()).sort(function (a, b) {
+            const ram = Number(b.maxRam || 0) - Number(a.maxRam || 0);
+            if (ram !== 0) return ram;
+            return String(a.host).localeCompare(String(b.host));
+        });
+        const desired =
+            overloaded || configuredPhishHosts === 0
+                ? []
+                : candidates
+                      .slice(0, configuredPhishHosts)
+                      .map(function (report) {
+                          return report.host;
+                      });
+
+        const previous = readCurrentPhishPlan();
+        const oldDesired = Array.isArray(previous.desired)
+            ? previous.desired.slice(0, PHISH_HOST_HARD_LIMIT)
+            : [];
+        const changed = JSON.stringify(oldDesired) !== JSON.stringify(desired);
+        const needsRepush = now - Number(previous.ts || 0) >= PHISH_REPUSH_MS;
+        if (!changed && !needsRepush) return previous;
+
+        const plan = {
+            desired: desired,
+            ts: now,
+            maxHosts: configuredPhishHosts,
+            version: VERSION,
+            reason: overloaded
+                ? "agent-circuit-breaker"
+                : configuredPhishHosts === 0
+                  ? "disabled"
+                  : "bounded",
+        };
+        await ns.write(PHISH_PLAN, JSON.stringify(plan), "w");
+
+        const targets = Array.from(
+            new Set((changed ? oldDesired : []).concat(desired))
+        );
+        for (const target of targets) {
+            const report = latest.get(target);
+            const entry = db[target];
+            const password =
+                report && typeof report.password === "string"
+                    ? report.password
+                    : entry && entry.password;
+            if (typeof password !== "string") continue;
+            await pushPhishPlanFiles(target, password);
+        }
+
+        if (changed) {
+            log(
+                "Phishing plan -> [" +
+                    desired.join(", ") +
+                    "] (hard cap " +
+                    PHISH_HOST_HARD_LIMIT +
+                    ").",
+                false
+            );
+        }
+        return plan;
     }
 
     async function updateStasisPlan(db, reports) {
@@ -1458,7 +1856,7 @@ function decodeBinary(data) {
         if (changed) log("Stasis plan -> [" + desired.join(", ") + "]", false);
     }
 
-    function summary(db, reports) {
+    async function summary(db, reports) {
         const now = Date.now();
         const latest = new Map();
         for (const r of reports) {
@@ -1484,6 +1882,57 @@ function decodeBinary(data) {
         } catch {
             // Intentionally ignored: this operation is best-effort.
         }
+        const phishPlan = readCurrentPhishPlan();
+        const phishReports = list.filter(function (report) {
+            return Number(report.phishPid || 0) > 0;
+        });
+        const phishThreads = phishReports.reduce(function (sum, report) {
+            return sum + Number(report.phishThreads || 0);
+        }, 0);
+        const phases = {};
+        for (const report of list) {
+            const name = String(report.phase || "unknown");
+            phases[name] = Number(phases[name] || 0) + 1;
+        }
+
+        const status = {
+            version: VERSION,
+            ts: now,
+            charisma: Number(ns.getPlayer().skills.charisma || 0),
+            activeAgents: list.length,
+            knownPasswords: Object.keys(db).length,
+            discoveredRam: totalRam,
+            managedProcessesReported: list.reduce(function (sum, report) {
+                return sum + Number(report.managedProcesses || 0);
+            }, 0),
+            phishPlan: phishPlan,
+            phishHostsReported: phishReports.map(function (report) {
+                return report.host;
+            }),
+            phishThreadsReported: phishThreads,
+            phases: phases,
+            stasis: linked,
+            agents: list.map(function (report) {
+                return {
+                    host: report.host,
+                    ts: Number(report.ts || 0),
+                    phase: String(report.phase || ""),
+                    activeTarget: String(report.activeTarget || ""),
+                    authAttempts: Number(report.authAttempts || 0),
+                    loopCount: Number(report.loopCount || 0),
+                    phishPid: Number(report.phishPid || 0),
+                    phishThreads: Number(report.phishThreads || 0),
+                    modelId: String(report.modelId || ""),
+                    error: String(report.error || ""),
+                };
+            }),
+        };
+        try {
+            await ns.write(STATUS_FILE, JSON.stringify(status, null, 2), "w");
+        } catch {
+            // Intentionally ignored: terminal summary still works.
+        }
+
         log(
             "active agents=" +
                 list.length +
@@ -1491,6 +1940,13 @@ function decodeBinary(data) {
                 Object.keys(db).length +
                 " | discovered Dark Net RAM=" +
                 ramText +
+                " | phishing=" +
+                phishReports.length +
+                "/" +
+                configuredPhishHosts +
+                " hosts (" +
+                phishThreads +
+                " threads)" +
                 " | stasis=" +
                 linked.length +
                 " [" +
@@ -1504,9 +1960,22 @@ function decodeBinary(data) {
     await writeWorkers();
     const agentRam = ns.getScriptRam(AGENT, "home");
     const db = loadDb();
+    await resetPhishPlan();
+    const stoppedLegacyPhish = stopKnownPhishing(db);
     log("Dark Net manager started. Persistent credential DB: " + DB_FILE, true);
     log(
         "Generated crawler/RAM/loot/phishing/stasis workers automatically under /Temp.",
+        true
+    );
+    log(
+        "Phishing safety: " +
+            configuredPhishHosts +
+            " authorized host(s) maximum, 5-8 second worker cooldown." +
+            (stoppedLegacyPhish > 0
+                ? " Stopped " +
+                  stoppedLegacyPhish +
+                  " pre-existing phishing process(es)."
+                : ""),
         true
     );
     log(
@@ -1541,6 +2010,7 @@ function decodeBinary(data) {
     }
 
     let lastStasis = 0;
+    let lastPhish = 0;
     let lastSummary = 0;
     let lastWorkerRefresh = Date.now();
     let warnedNoDnet = false;
@@ -1576,13 +2046,18 @@ function decodeBinary(data) {
             const reports = readReports();
             await ingestReports(db, reports);
 
+            if (Date.now() - lastPhish >= PHISH_REFRESH_MS) {
+                await updatePhishingPlan(db, reports);
+                lastPhish = Date.now();
+            }
+
             if (Date.now() - lastStasis >= STASIS_REFRESH_MS) {
                 await updateStasisPlan(db, reports);
                 lastStasis = Date.now();
             }
 
             if (Date.now() - lastSummary >= SUMMARY_INTERVAL_MS) {
-                summary(db, reports);
+                await summary(db, reports);
                 lastSummary = Date.now();
             }
         } catch (e) {

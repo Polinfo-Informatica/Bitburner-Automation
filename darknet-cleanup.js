@@ -2,8 +2,8 @@
  * darknet-cleanup.js
  * One-shot cleanup utility for the custom Dark Net automation.
  *
- * Run this ONCE before switching from an older darknet-manager.js build to v1.0.9+.
- * It kills only this project's manager/workers; unrelated scripts are left alone.
+ * Run this before switching manager builds. It kills only this project's
+ * manager/workers; Alain's autopilot and unrelated scripts are left alone.
  *
  * @param {NS} ns
  */
@@ -14,9 +14,12 @@ export async function main(ns) {
         // Intentionally ignored: this operation is best-effort.
     }
 
+    const VERSION = "1.1.0";
     const DB_FILE = "darknet-passwords.txt";
     const REPORT_PREFIX = "/Temp/dnet-report-";
+    const PHISH_PLAN = "/Temp/dnet-phish-plan.txt";
     const MANAGER = "darknet-manager.js";
+    const CLEANUP_PASSES = 4;
     const MANAGED = new Set([
         "/Temp/dnet-agent.js",
         "/Temp/dnet-phish.js",
@@ -27,59 +30,63 @@ export async function main(ns) {
         "/Temp/dnet-loot.js",
     ]);
 
-    /** @type {Map<string, string>} */
-    const targets = new Map();
-    targets.set("darkweb", "");
+    function collectTargets() {
+        /** @type {Map<string, string>} */
+        const targets = new Map();
+        targets.set("darkweb", "");
 
-    // Known credentials are the most reliable source of previously-authenticated nodes.
-    try {
-        const raw = ns.read(DB_FILE);
-        if (raw) {
-            const db = JSON.parse(raw);
-            if (db && typeof db === "object") {
-                for (const [host, entry] of Object.entries(db)) {
-                    if (entry && typeof entry.password === "string") {
-                        targets.set(host, entry.password);
+        try {
+            const raw = ns.read(DB_FILE);
+            if (raw) {
+                const db = JSON.parse(raw);
+                if (db && typeof db === "object") {
+                    for (const [host, entry] of Object.entries(db)) {
+                        if (entry && typeof entry.password === "string") {
+                            targets.set(host, entry.password);
+                        }
                     }
                 }
             }
+        } catch {
+            // Intentionally ignored: reports can still identify targets.
         }
-    } catch {
-        // Intentionally ignored: this operation is best-effort.
-    }
 
-    // Reports can contain a node that has not yet made it into the credential DB.
-    try {
-        for (const file of ns.ls("home", REPORT_PREFIX)) {
-            try {
-                const report = JSON.parse(ns.read(file));
-                if (
-                    report &&
-                    typeof report.host === "string" &&
-                    typeof report.password === "string"
-                ) {
-                    targets.set(report.host, report.password);
+        try {
+            for (const file of ns.ls("home", REPORT_PREFIX)) {
+                try {
+                    const report = JSON.parse(ns.read(file));
+                    if (
+                        report &&
+                        typeof report.host === "string" &&
+                        typeof report.password === "string"
+                    ) {
+                        targets.set(report.host, report.password);
+                    }
+                } catch {
+                    // Intentionally ignored: another report may still be valid.
                 }
-            } catch {
-                // Intentionally ignored: this operation is best-effort.
             }
+        } catch {
+            // Intentionally ignored: the DB and darkweb can still be cleaned.
         }
-    } catch {
-        // Intentionally ignored: this operation is best-effort.
+
+        return targets;
     }
 
-    let hostsChecked = 0;
-    let sessionsOpened = 0;
     let processesKilled = 0;
-    let offlineOrUnavailable = 0;
+    let managersKilled = 0;
+    const checkedHosts = new Set();
+    const unavailableHosts = new Set();
 
-    // A running pre-update manager immediately recreates the workers we kill below.
-    // Stop every manager instance first, while leaving Alain's autopilot untouched.
+    // Managers must stop first or they can recreate workers during cleanup.
     try {
         for (const process of ns.ps("home")) {
             if (process.filename !== MANAGER) continue;
             try {
-                if (ns.kill(process.pid)) processesKilled++;
+                if (ns.kill(process.pid)) {
+                    processesKilled++;
+                    managersKilled++;
+                }
             } catch {
                 // Intentionally ignored: another cleanup may have won the race.
             }
@@ -88,47 +95,46 @@ export async function main(ns) {
         // Intentionally ignored: worker cleanup can still proceed.
     }
 
-    for (const [host, password] of targets) {
-        hostsChecked++;
-
-        try {
-            const server = ns.getServer(host);
-            if (server && server.isOnline === false) {
-                offlineOrUnavailable++;
-                continue;
-            }
-        } catch {
-            offlineOrUnavailable++;
-            continue;
-        }
-
-        try {
-            let session;
-            if (host === "darkweb") {
-                session = await ns.dnet.authenticate("darkweb", "");
-            } else {
-                session = ns.dnet.connectToSession(host, password);
-            }
-            if (session && session.success) sessionsOpened++;
-        } catch {
-            // Intentionally ignored: this operation is best-effort.
-        }
-
-        try {
-            for (const process of ns.ps(host)) {
-                if (!MANAGED.has(process.filename)) continue;
-                try {
-                    if (ns.kill(process.pid)) processesKilled++;
-                } catch {
-                    // Intentionally ignored: this operation is best-effort.
+    // Re-read the DB/reports on every pass. This catches a late report or a
+    // worker deployed just as its parent was being stopped.
+    for (let pass = 1; pass <= CLEANUP_PASSES; pass++) {
+        const targets = collectTargets();
+        for (const host of targets.keys()) {
+            checkedHosts.add(host);
+            try {
+                for (const process of ns.ps(host)) {
+                    if (!MANAGED.has(process.filename)) continue;
+                    try {
+                        if (ns.kill(process.pid)) processesKilled++;
+                    } catch {
+                        // Intentionally ignored: a prior pass may have killed it.
+                    }
                 }
+            } catch {
+                unavailableHosts.add(host);
             }
-        } catch {
-            // Intentionally ignored: this operation is best-effort.
         }
+        if (pass < CLEANUP_PASSES) await ns.sleep(1000);
     }
 
-    // Remove stale home-side reports so v1.0.9 starts with a clean topology view.
+    // Any v1.1.0 worker that briefly survives a race sees an empty plan and
+    // refuses to start phishing when it next receives the home control file.
+    try {
+        await ns.write(
+            PHISH_PLAN,
+            JSON.stringify({
+                desired: [],
+                ts: Date.now(),
+                maxHosts: 0,
+                version: VERSION,
+                reason: "cleanup",
+            }),
+            "w"
+        );
+    } catch {
+        // Intentionally ignored: processes have already been stopped directly.
+    }
+
     let reportsRemoved = 0;
     try {
         for (const file of ns.ls("home", REPORT_PREFIX)) {
@@ -143,18 +149,24 @@ export async function main(ns) {
     }
 
     ns.tprint(
-        "[DNET CLEANUP] checked=" +
-            hostsChecked +
-            " | sessions=" +
-            sessionsOpened +
+        "[DNET CLEANUP " +
+            VERSION +
+            "] passes=" +
+            CLEANUP_PASSES +
+            " | checked=" +
+            checkedHosts.size +
+            " | managers=" +
+            managersKilled +
             " | killed=" +
             processesKilled +
             " | unavailable=" +
-            offlineOrUnavailable +
+            unavailableHosts.size +
             " | reports removed=" +
             reportsRemoved
     );
     ns.tprint(
-        "[DNET CLEANUP] Done. You can now run darknet-manager.js v1.0.9."
+        "[DNET CLEANUP " +
+            VERSION +
+            "] Done. You can now run darknet-manager.js."
     );
 }
