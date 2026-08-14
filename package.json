@@ -2,13 +2,13 @@
     "name": "bitburner-automation",
     "private": true,
     "scripts": {
-        "syntax": "node --check darknet-manager.js && node --check darknet-cleanup.js && node tools/validate-generated-workers.mjs",
+        "syntax": "node --check darknet-manager.js && node --check darknet-cleanup.js && node --check git-pull.js && node tools/validate-generated-workers.mjs",
         "ram-collisions": "node tools/check-bitburner-ram-collisions.mjs",
         "cpu-hazards": "node tools/check-cpu-hazards.mjs",
         "typecheck": "tsc -p tsconfig.json",
-        "lint": "eslint darknet-manager.js darknet-cleanup.js tools/*.mjs",
-        "format": "prettier --write darknet-manager.js darknet-cleanup.js tools/*.mjs eslint.config.mjs package.json tsconfig.json .prettierrc.json",
-        "format:check": "prettier --check darknet-manager.js darknet-cleanup.js tools/*.mjs eslint.config.mjs package.json tsconfig.json .prettierrc.json",
+        "lint": "eslint darknet-manager.js darknet-cleanup.js git-pull.js tools/*.mjs",
+        "format": "prettier --write darknet-manager.js darknet-cleanup.js git-pull.js tools/*.mjs eslint.config.mjs package.json tsconfig.json .prettierrc.json",
+        "format:check": "prettier --check darknet-manager.js darknet-cleanup.js git-pull.js tools/*.mjs eslint.config.mjs package.json tsconfig.json .prettierrc.json",
         "check": "npm run syntax && npm run ram-collisions && npm run cpu-hazards && npm run typecheck && npm run lint && npm run format:check"
     },
     "devDependencies": {
