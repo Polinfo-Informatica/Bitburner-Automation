@@ -1,0 +1,81 @@
+name: Fix Prime CPU v1.0.8
+on:
+  push:
+    paths:
+      - '.github/workflows/fix-prime-cpu-v108.yml'
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Replace CPU-bound prime solver
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path('darknet-manager.js')
+          text = path.read_text(encoding='utf-8')
+          text = text.replace('"1.0.7"', '"1.0.8"')
+
+          pattern = re.compile(
+              r'    function largestPrimeFactor\(value\) \{[\s\S]*?\n    \}\n\n    function decodeBinary',
+              re.MULTILINE,
+          )
+          replacement = '''    function largestPrimeFactor(value) {
+              let n;
+              try {
+                  n = BigInt(String(value).trim());
+              } catch {
+                  return null;
+              }
+              if (n < 2n) return n.toString();
+
+              // Bitburner v3.0.1 constructs PrimeTime 2 targets from exactly one
+              // known large prime multiplied by a small number of SMALL_PRIMES.
+              // Strip those small factors instead of trial-dividing every odd
+              // integer up to sqrt(n), which can freeze the game's UI thread.
+              let largest = 1n;
+              for (const prime of SMALL_PRIMES) {
+                  const p = BigInt(prime);
+                  while (n % p === 0n) {
+                      largest = p;
+                      n /= p;
+                  }
+              }
+
+              // After the small factors are removed, v3.0.1 guarantees the
+              // remainder is the generated large prime.
+              if (n > largest) largest = n;
+              return largest.toString();
+          }
+
+          function decodeBinary'''
+
+          text, count = pattern.subn(replacement, text, count=1)
+          if count != 1:
+              raise SystemExit(f'Expected to replace one largestPrimeFactor function, replaced {count}')
+
+          path.write_text(text, encoding='utf-8')
+          PY
+      - name: Format maintained sources
+        run: npm run format
+      - name: Run complete quality gate
+        run: npm run check
+      - name: Commit v1.0.8
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add darknet-manager.js package.json tools/check-cpu-hazards.mjs
+          git diff --cached --quiet && exit 0
+          git commit -m "Fix CPU-bound PrimeTime solver in v1.0.8"
+          git push
