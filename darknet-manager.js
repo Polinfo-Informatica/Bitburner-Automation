@@ -19,8 +19,12 @@
  * @param {NS} ns
  */
 export async function main(ns) {
-    try { ns.disableLog("ALL"); } catch { }
-    const VERSION = "1.0.5";
+    try {
+        ns.disableLog("ALL");
+    } catch {
+        // Intentionally ignored: this operation is best-effort.
+    }
+    const VERSION = "1.0.6";
 
     const AGENT = "/Temp/dnet-agent.js";
     const PHISH = "/Temp/dnet-phish.js";
@@ -45,8 +49,10 @@ export async function main(ns) {
     const PHISH_SOURCE = String.raw`
 /** @param {NS} ns */
 export async function main(ns) {
-    try { ns.disableLog("ALL"); } catch { }
-    while (true) {
+    try { ns.disableLog("ALL"); } catch {
+        // Intentionally ignored: this operation is best-effort.
+    }
+    for (;;) {
         try {
             await ns.dnet.phishingAttack();
         } catch {
@@ -59,11 +65,13 @@ export async function main(ns) {
     const RAM_WORKER_SOURCE = String.raw`
 /** @param {NS} ns */
 export async function main(ns) {
-    try { ns.disableLog("ALL"); } catch { }
+    try { ns.disableLog("ALL"); } catch {
+        // Intentionally ignored: this operation is best-effort.
+    }
     let unchanged = 0;
     let lastBlocked = Number.POSITIVE_INFINITY;
 
-    while (true) {
+    for (;;) {
         let blocked = 0;
         try { blocked = ns.dnet.getBlockedRam(); }
         catch { return; }
@@ -90,11 +98,12 @@ export async function main(ns) {
 }
 `;
 
-
     const RAM_LAUNCHER_SOURCE = String.raw`
 /** @param {NS} ns */
 export async function main(ns) {
-    try { ns.disableLog("ALL"); } catch { }
+    try { ns.disableLog("ALL"); } catch {
+        // Intentionally ignored: this operation is best-effort.
+    }
     const RAM_WORKER = "/Temp/dnet-ram-worker.js";
     const host = ns.getHostname();
     try {
@@ -124,36 +133,50 @@ export async function main(ns) {
                 }
             }
             selectedThreads = best;
-        } catch { }
+        } catch {
+        // Intentionally ignored: this operation is best-effort.
+    }
 
         ns.exec(RAM_WORKER, host, selectedThreads, "formula-selected");
-    } catch { }
+    } catch {
+        // Intentionally ignored: this operation is best-effort.
+    }
 }
 `;
 
     const STASIS_SOURCE = String.raw`
 /** @param {NS} ns */
 export async function main(ns) {
-    try { ns.disableLog("ALL"); } catch { }
+    try { ns.disableLog("ALL"); } catch {
+        // Intentionally ignored: this operation is best-effort.
+    }
     const shouldLink = String(ns.args[0] ?? "1") !== "0";
     try { await ns.dnet.setStasisLink(shouldLink); }
-    catch { }
+    catch {
+        // Intentionally ignored: this operation is best-effort.
+    }
 }
 `;
 
     const LOOT_SOURCE = String.raw`
 /** @param {NS} ns */
 export async function main(ns) {
-    try { ns.disableLog("ALL"); } catch { }
+    try { ns.disableLog("ALL"); } catch {
+        // Intentionally ignored: this operation is best-effort.
+    }
     const host = ns.getHostname();
 
     try {
         const caches = ns.ls(host, ".cache");
         for (const cache of caches) {
             try { ns.dnet.openCache(cache, true); }
-            catch { }
+            catch {
+        // Intentionally ignored: this operation is best-effort.
+    }
         }
-    } catch { }
+    } catch {
+        // Intentionally ignored: this operation is best-effort.
+    }
 
     try {
         const files = ns.ls(host).filter(function (f) {
@@ -164,7 +187,9 @@ export async function main(ns) {
 
         for (const file of files) {
             try { await ns.scp(file, "home", host); }
-            catch { }
+            catch {
+        // Intentionally ignored: this operation is best-effort.
+    }
 
             if (file.endsWith(".txt")) {
                 try {
@@ -178,17 +203,23 @@ export async function main(ns) {
                         "w"
                     );
                     await ns.scp(archive, "home", host);
-                } catch { }
+                } catch {
+        // Intentionally ignored: this operation is best-effort.
+    }
             }
         }
-    } catch { }
+    } catch {
+        // Intentionally ignored: this operation is best-effort.
+    }
 }
 `;
 
     const PHISH_LAUNCHER_SOURCE = String.raw`
 /** @param {NS} ns */
 export async function main(ns) {
-    try { ns.disableLog("ALL"); } catch { }
+    try { ns.disableLog("ALL"); } catch {
+        // Intentionally ignored: this operation is best-effort.
+    }
     const PHISH = "/Temp/dnet-phish.js";
     const host = ns.getHostname();
     if (host === "darkweb") return;
@@ -200,14 +231,18 @@ export async function main(ns) {
         const free = Math.max(0, ns.getServerMaxRam(host) - ns.getServerUsedRam(host));
         const threads = Math.floor((free * 0.65) / ram);
         if (threads > 0) ns.exec(PHISH, host, threads, "managed");
-    } catch { }
+    } catch {
+        // Intentionally ignored: this operation is best-effort.
+    }
 }
 `;
 
     const AGENT_SOURCE = String.raw`
 /** @param {NS} ns */
 export async function main(ns) {
-    try { ns.disableLog("ALL"); } catch { }
+    try { ns.disableLog("ALL"); } catch {
+        // Intentionally ignored: this operation is best-effort.
+    }
     const AGENT = "/Temp/dnet-agent.js";
     const PHISH = "/Temp/dnet-phish.js";
     const PHISH_LAUNCHER = "/Temp/dnet-phish-launcher.js";
@@ -221,7 +256,7 @@ export async function main(ns) {
 
     const host = ns.getHostname();
     const selfPassword = String(ns.args[0] ?? "");
-    const AGENT_VERSION = "1.0.5";
+    const AGENT_VERSION = "1.0.6";
     const REPORT_INTERVAL = 15000;
     const LOOT_INTERVAL = 60000;
     const LOOP_INTERVAL = 4000;
@@ -310,7 +345,9 @@ export async function main(ns) {
             if (!raw) return null;
             const db = JSON.parse(raw);
             if (db && db[server] && typeof db[server].password === "string") return db[server].password;
-        } catch { }
+        } catch {
+        // Intentionally ignored: this operation is best-effort.
+    }
         return null;
     }
 
@@ -319,7 +356,9 @@ export async function main(ns) {
         try {
             const obj = JSON.parse(line);
             if (obj && typeof obj === "object" && "passwordAttempted" in obj) return obj;
-        } catch { }
+        } catch {
+        // Intentionally ignored: this operation is best-effort.
+    }
         return null;
     }
 
@@ -345,7 +384,9 @@ export async function main(ns) {
                 const obj = parsePasswordResponse(line);
                 if (obj && String(obj.passwordAttempted) === String(attempted)) return obj;
             }
-        } catch { }
+        } catch {
+        // Intentionally ignored: this operation is best-effort.
+    }
         return null;
     }
 
@@ -491,7 +532,7 @@ export async function main(ns) {
         }
         function muldiv() {
             let v = parseAtom();
-            while (true) {
+            for (;;) {
                 skip();
                 const op = expr[i];
                 if (op !== "*" && op !== "/") break;
@@ -503,7 +544,7 @@ export async function main(ns) {
         }
         function addsub() {
             let v = muldiv();
-            while (true) {
+            for (;;) {
                 skip();
                 const op = expr[i];
                 if (op !== "+" && op !== "-") break;
@@ -772,7 +813,9 @@ export async function main(ns) {
                         }
                     }
                 }
-            } catch { }
+            } catch {
+        // Intentionally ignored: this operation is best-effort.
+    }
             await ns.sleep(500);
         }
         return null;
@@ -957,7 +1000,9 @@ export async function main(ns) {
                 let running = false;
                 try {
                     running = ns.ps(target).some(function (p) { return p.pid === lootPid; });
-                } catch { }
+                } catch {
+        // Intentionally ignored: this operation is best-effort.
+    }
                 if (!running) break;
                 await ns.sleep(50);
             }
@@ -970,11 +1015,15 @@ export async function main(ns) {
             if (existing && String(existing.args && existing.args[1] || "") === AGENT_VERSION) return true;
             for (const proc of processes) {
                 if (managed.includes(proc.filename)) {
-                    try { ns.kill(proc.pid); } catch { }
+                    try { ns.kill(proc.pid); } catch {
+        // Intentionally ignored: this operation is best-effort.
+    }
                 }
             }
             if (processes.length > 0) await ns.sleep(50);
-        } catch { }
+        } catch {
+        // Intentionally ignored: this operation is best-effort.
+    }
 
         try { return ns.exec(AGENT, target, 1, password, AGENT_VERSION) !== 0; }
         catch { return false; }
@@ -986,7 +1035,9 @@ export async function main(ns) {
         try {
             const running = ns.ps(host).some(function (p) { return p.filename === LOOT; });
             if (!running) ns.exec(LOOT, host, 1, "periodic");
-        } catch { }
+        } catch {
+        // Intentionally ignored: this operation is best-effort.
+    }
     }
 
     function readPlan() {
@@ -1020,7 +1071,9 @@ export async function main(ns) {
                 return p.filename === STASIS;
             });
             if (!running) ns.exec(STASIS, host, 1, shouldLink ? "1" : "0");
-        } catch { }
+        } catch {
+        // Intentionally ignored: this operation is best-effort.
+    }
 
         return false;
     }
@@ -1031,7 +1084,9 @@ export async function main(ns) {
                 return p.filename === PHISH || p.filename === PHISH_LAUNCHER;
             });
             if (!busy) ns.exec(PHISH_LAUNCHER, host, 1);
-        } catch { }
+        } catch {
+        // Intentionally ignored: this operation is best-effort.
+    }
     }
 
     async function saveReport(errorText) {
@@ -1058,10 +1113,12 @@ export async function main(ns) {
             await ns.write(file, JSON.stringify(report), "w");
             await ns.scp(file, "home", host);
             lastReport = Date.now();
-        } catch { }
+        } catch {
+        // Intentionally ignored: this operation is best-effort.
+    }
     }
 
-    while (true) {
+    for (;;) {
         try {
             await lootSelf();
 
@@ -1072,7 +1129,9 @@ export async function main(ns) {
                 if (target === host) continue;
                 let currentAgent = null;
                 try { currentAgent = ns.ps(target).find(function (p) { return p.filename === AGENT; }) || null; }
-                catch { }
+                catch {
+        // Intentionally ignored: this operation is best-effort.
+    }
                 if (currentAgent && String(currentAgent.args && currentAgent.args[1] || "") === AGENT_VERSION) continue;
 
                 const password = await solveTarget(target);
@@ -1089,7 +1148,9 @@ export async function main(ns) {
         try {
             // Wake quickly enough to catch mutations but don't busy-loop.
             await ns.sleep(LOOP_INTERVAL);
-        } catch { }
+        } catch {
+        // Intentionally ignored: this operation is best-effort.
+    }
     }
 }
 `;
@@ -1108,7 +1169,8 @@ export async function main(ns) {
         await ns.write(RAM_WORKER, RAM_WORKER_SOURCE, "w");
         await ns.write(STASIS, STASIS_SOURCE, "w");
         await ns.write(LOOT, LOOT_SOURCE, "w");
-        if (!ns.fileExists(PLAN, "home")) await ns.write(PLAN, JSON.stringify({ desired: [], ts: Date.now() }), "w");
+        if (!ns.fileExists(PLAN, "home"))
+            await ns.write(PLAN, JSON.stringify({ desired: [], ts: Date.now() }), "w");
         if (!ns.fileExists(DB_FILE, "home")) await ns.write(DB_FILE, "{}", "w");
     }
 
@@ -1135,7 +1197,11 @@ export async function main(ns) {
                 const r = JSON.parse(ns.read(file));
                 if (!r || !r.host) continue;
                 if (now - Number(r.ts || 0) > REPORT_RETENTION_MS) {
-                    try { ns.rm(file, "home"); } catch { }
+                    try {
+                        ns.rm(file, "home");
+                    } catch {
+                        // Intentionally ignored: this operation is best-effort.
+                    }
                     continue;
                 }
                 try {
@@ -1145,9 +1211,13 @@ export async function main(ns) {
                         r.maxRam = Number(server.maxRam || 0);
                         r.usedRam = Number(server.ramUsed || 0);
                     }
-                } catch { }
+                } catch {
+                    // Intentionally ignored: this operation is best-effort.
+                }
                 reports.push(r);
-            } catch { }
+            } catch {
+                // Intentionally ignored: this operation is best-effort.
+            }
         }
         return reports;
     }
@@ -1157,13 +1227,17 @@ export async function main(ns) {
         for (const r of reports) {
             if (r && r.host && typeof r.password === "string") {
                 const old = db[r.host];
-                if (!old || old.password !== r.password || Number(r.ts || 0) > Number(old.lastSeen || 0)) {
+                if (
+                    !old ||
+                    old.password !== r.password ||
+                    Number(r.ts || 0) > Number(old.lastSeen || 0)
+                ) {
                     db[r.host] = {
                         password: r.password,
                         lastSeen: Number(r.ts || Date.now()),
                         maxRam: Number(r.maxRam || 0),
                         depth: Number(r.depth ?? -1),
-                        modelId: String(r.modelId || "")
+                        modelId: String(r.modelId || ""),
                     };
                     changed = true;
                 }
@@ -1172,13 +1246,17 @@ export async function main(ns) {
                 for (const f of r.found) {
                     if (!f || !f.host || typeof f.password !== "string") continue;
                     const old = db[f.host];
-                    if (!old || old.password !== f.password || Number(f.ts || 0) > Number(old.lastSeen || 0)) {
+                    if (
+                        !old ||
+                        old.password !== f.password ||
+                        Number(f.ts || 0) > Number(old.lastSeen || 0)
+                    ) {
                         db[f.host] = {
                             password: f.password,
                             lastSeen: Number(f.ts || Date.now()),
                             maxRam: old ? Number(old.maxRam || 0) : 0,
                             depth: old ? Number(old.depth ?? -1) : -1,
-                            modelId: String(f.modelId || (old ? old.modelId || "" : ""))
+                            modelId: String(f.modelId || (old ? old.modelId || "" : "")),
                         };
                         changed = true;
                     }
@@ -1190,21 +1268,46 @@ export async function main(ns) {
 
     async function seedDarkweb() {
         try {
-            const running = ns.ps("darkweb").find(function (p) { return p.filename === AGENT; });
-            if (running && String(running.args && running.args[1] || "") === VERSION) return true;
+            const running = ns.ps("darkweb").find(function (p) {
+                return p.filename === AGENT;
+            });
+            if (running && String((running.args && running.args[1]) || "") === VERSION) return true;
             if (running) {
-                try { ns.kill(running.pid); } catch { }
+                try {
+                    ns.kill(running.pid);
+                } catch {
+                    // Intentionally ignored: this operation is best-effort.
+                }
                 await ns.sleep(50);
             }
-        } catch { }
+        } catch {
+            // Intentionally ignored: this operation is best-effort.
+        }
 
         let auth;
-        try { auth = await ns.dnet.authenticate("darkweb", ""); }
-        catch { return false; }
+        try {
+            auth = await ns.dnet.authenticate("darkweb", "");
+        } catch {
+            return false;
+        }
         if (!auth || !auth.success) return false;
 
         try {
-            await ns.scp([AGENT, PHISH, PHISH_LAUNCHER, RAM_LAUNCHER, RAM_WORKER, STASIS, LOOT, PLAN, DB_FILE], "darkweb", "home");
+            await ns.scp(
+                [
+                    AGENT,
+                    PHISH,
+                    PHISH_LAUNCHER,
+                    RAM_LAUNCHER,
+                    RAM_WORKER,
+                    STASIS,
+                    LOOT,
+                    PLAN,
+                    DB_FILE,
+                ],
+                "darkweb",
+                "home",
+            );
             const pid = ns.exec(AGENT, "darkweb", 1, "", VERSION);
             if (pid) log("Seeded recursive crawler on darkweb (PID " + pid + ").", false);
             return pid !== 0;
@@ -1219,13 +1322,18 @@ export async function main(ns) {
             if (!session || !session.success) return false;
             await ns.scp([PLAN, STASIS], host, "home");
             return true;
-        } catch { return false; }
+        } catch {
+            return false;
+        }
     }
 
     async function updateStasisPlan(db, reports) {
         let limit;
-        try { limit = ns.dnet.getStasisLinkLimit(); }
-        catch { return; }
+        try {
+            limit = ns.dnet.getStasisLinkLimit();
+        } catch {
+            return;
+        }
 
         const now = Date.now();
         const latest = new Map();
@@ -1243,13 +1351,17 @@ export async function main(ns) {
             if (blocked !== 0) return blocked;
             return Number(b.depth || -1) - Number(a.depth || -1);
         });
-        const desired = candidates.slice(0, Math.max(0, limit)).map(function (r) { return r.host; });
+        const desired = candidates.slice(0, Math.max(0, limit)).map(function (r) {
+            return r.host;
+        });
 
         let previous = { desired: [], ts: 0 };
         try {
             const raw = ns.read(PLAN);
             if (raw) previous = JSON.parse(raw);
-        } catch { }
+        } catch {
+            // Intentionally ignored: this operation is best-effort.
+        }
         const oldDesired = Array.isArray(previous.desired) ? previous.desired : [];
         const changed = JSON.stringify(oldDesired) !== JSON.stringify(desired);
         const needsRepush = now - Number(previous.ts || 0) >= STASIS_REPUSH_MS;
@@ -1257,12 +1369,19 @@ export async function main(ns) {
 
         await ns.write(PLAN, JSON.stringify({ desired: desired, ts: now }), "w");
         let linked = [];
-        try { linked = ns.dnet.getStasisLinkedServers(false); } catch { }
+        try {
+            linked = ns.dnet.getStasisLinkedServers(false);
+        } catch {
+            // Intentionally ignored: this operation is best-effort.
+        }
         const targets = Array.from(new Set(desired.concat(linked)));
         for (const h of targets) {
             const report = latest.get(h);
             const entry = db[h];
-            const password = report && typeof report.password === "string" ? report.password : entry && entry.password;
+            const password =
+                report && typeof report.password === "string"
+                    ? report.password
+                    : entry && entry.password;
             if (typeof password !== "string") continue;
             await pushPlanFiles(h, password);
         }
@@ -1278,15 +1397,35 @@ export async function main(ns) {
             if (!old || Number(r.ts || 0) > Number(old.ts || 0)) latest.set(r.host, r);
         }
         const list = Array.from(latest.values());
-        const totalRam = list.reduce(function (sum, r) { return sum + Number(r.maxRam || 0); }, 0);
+        const totalRam = list.reduce(function (sum, r) {
+            return sum + Number(r.maxRam || 0);
+        }, 0);
         let linked = [];
-        try { linked = ns.dnet.getStasisLinkedServers(false); } catch { }
+        try {
+            linked = ns.dnet.getStasisLinkedServers(false);
+        } catch {
+            // Intentionally ignored: this operation is best-effort.
+        }
         let ramText = String(totalRam) + " GB";
-        try { ramText = ns.format.ram(totalRam); } catch { }
-        log("active agents=" + list.length +
-            " | known passwords=" + Object.keys(db).length +
-            " | discovered Dark Net RAM=" + ramText +
-            " | stasis=" + linked.length + " [" + linked.join(", ") + "]", false);
+        try {
+            ramText = ns.format.ram(totalRam);
+        } catch {
+            // Intentionally ignored: this operation is best-effort.
+        }
+        log(
+            "active agents=" +
+                list.length +
+                " | known passwords=" +
+                Object.keys(db).length +
+                " | discovered Dark Net RAM=" +
+                ramText +
+                " | stasis=" +
+                linked.length +
+                " [" +
+                linked.join(", ") +
+                "]",
+            false,
+        );
     }
 
     await writeWorkers();
@@ -1298,11 +1437,25 @@ export async function main(ns) {
     try {
         const dwMax = ns.getServerMaxRam("darkweb");
         const dwUsed = ns.getServerUsedRam("darkweb");
-        log("darkweb RAM now: max=" + ns.format.ram(dwMax) + " | used=" + ns.format.ram(dwUsed) + " | free=" + ns.format.ram(Math.max(0, dwMax - dwUsed)) + ".", true);
-    } catch { }
+        log(
+            "darkweb RAM now: max=" +
+                ns.format.ram(dwMax) +
+                " | used=" +
+                ns.format.ram(dwUsed) +
+                " | free=" +
+                ns.format.ram(Math.max(0, dwMax - dwUsed)) +
+                ".",
+            true,
+        );
+    } catch {
+        // Intentionally ignored: this operation is best-effort.
+    }
 
     if (!(agentRam > 0) || agentRam > 16) {
-        log("ERROR: generated crawler exceeds the 16 GB darkweb gateway limit; refusing to retry-loop.", true);
+        log(
+            "ERROR: generated crawler exceeds the 16 GB darkweb gateway limit; refusing to retry-loop.",
+            true,
+        );
         return;
     }
 
@@ -1311,14 +1464,21 @@ export async function main(ns) {
     let lastWorkerRefresh = Date.now();
     let warnedNoDnet = false;
 
-    while (true) {
+    for (;;) {
         try {
             let dnetAvailable = true;
-            try { ns.dnet.probe(); } catch { dnetAvailable = false; }
+            try {
+                ns.dnet.probe();
+            } catch {
+                dnetAvailable = false;
+            }
 
             if (!dnetAvailable) {
                 if (!warnedNoDnet) {
-                    log("Dark Net API unavailable. Buy TOR + DarkscapeNavigator.exe; retrying automatically.", true);
+                    log(
+                        "Dark Net API unavailable. Buy TOR + DarkscapeNavigator.exe; retrying automatically.",
+                        true,
+                    );
                     warnedNoDnet = true;
                 }
                 await ns.sleep(10000);

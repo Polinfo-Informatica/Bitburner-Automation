@@ -1,22 +1,22 @@
 {
-  "name": "bitburner-automation",
-  "private": true,
-  "scripts": {
-    "syntax": "node --check darknet-manager.js && node --check darknet-cleanup.js && node tools/validate-generated-workers.mjs",
-    "ram-collisions": "node tools/check-bitburner-ram-collisions.mjs",
-    "typecheck": "tsc -p tsconfig.json",
-    "lint": "eslint darknet-manager.js darknet-cleanup.js tools/*.mjs",
-    "format": "prettier --write darknet-manager.js darknet-cleanup.js tools/*.mjs eslint.config.mjs package.json tsconfig.json .prettierrc.json",
-    "format:check": "prettier --check darknet-manager.js darknet-cleanup.js tools/*.mjs eslint.config.mjs package.json tsconfig.json .prettierrc.json",
-    "check": "npm run syntax && npm run ram-collisions && npm run typecheck && npm run lint && npm run format:check"
-  },
-  "devDependencies": {
-    "@eslint/js": "latest",
-    "eslint": "latest",
-    "eslint-config-prettier": "latest",
-    "eslint-plugin-prettier": "latest",
-    "globals": "latest",
-    "prettier": "latest",
-    "typescript": "latest"
-  }
+    "name": "bitburner-automation",
+    "private": true,
+    "scripts": {
+        "syntax": "node --check darknet-manager.js && node --check darknet-cleanup.js && node tools/validate-generated-workers.mjs",
+        "ram-collisions": "node tools/check-bitburner-ram-collisions.mjs",
+        "typecheck": "tsc -p tsconfig.json",
+        "lint": "eslint darknet-manager.js darknet-cleanup.js tools/*.mjs",
+        "format": "prettier --write darknet-manager.js darknet-cleanup.js tools/*.mjs eslint.config.mjs package.json tsconfig.json .prettierrc.json",
+        "format:check": "prettier --check darknet-manager.js darknet-cleanup.js tools/*.mjs eslint.config.mjs package.json tsconfig.json .prettierrc.json",
+        "check": "npm run syntax && npm run ram-collisions && npm run typecheck && npm run lint && npm run format:check"
+    },
+    "devDependencies": {
+        "@eslint/js": "latest",
+        "eslint": "latest",
+        "eslint-config-prettier": "latest",
+        "eslint-plugin-prettier": "latest",
+        "globals": "latest",
+        "prettier": "latest",
+        "typescript": "latest"
+    }
 }

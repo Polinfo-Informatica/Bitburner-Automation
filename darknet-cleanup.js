@@ -8,7 +8,11 @@
  * @param {NS} ns
  */
 export async function main(ns) {
-    try { ns.disableLog("ALL"); } catch { }
+    try {
+        ns.disableLog("ALL");
+    } catch {
+        // Intentionally ignored: this operation is best-effort.
+    }
 
     const DB_FILE = "darknet-passwords.txt";
     const REPORT_PREFIX = "/Temp/dnet-report-";
@@ -19,7 +23,7 @@ export async function main(ns) {
         "/Temp/dnet-ram-launcher.js",
         "/Temp/dnet-ram-worker.js",
         "/Temp/dnet-stasis.js",
-        "/Temp/dnet-loot.js"
+        "/Temp/dnet-loot.js",
     ]);
 
     /** @type {Map<string, string>} */
@@ -39,19 +43,29 @@ export async function main(ns) {
                 }
             }
         }
-    } catch { }
+    } catch {
+        // Intentionally ignored: this operation is best-effort.
+    }
 
     // Reports can contain a node that has not yet made it into the credential DB.
     try {
         for (const file of ns.ls("home", REPORT_PREFIX)) {
             try {
                 const report = JSON.parse(ns.read(file));
-                if (report && typeof report.host === "string" && typeof report.password === "string") {
+                if (
+                    report &&
+                    typeof report.host === "string" &&
+                    typeof report.password === "string"
+                ) {
                     targets.set(report.host, report.password);
                 }
-            } catch { }
+            } catch {
+                // Intentionally ignored: this operation is best-effort.
+            }
         }
-    } catch { }
+    } catch {
+        // Intentionally ignored: this operation is best-effort.
+    }
 
     let hostsChecked = 0;
     let sessionsOpened = 0;
@@ -80,16 +94,22 @@ export async function main(ns) {
                 session = ns.dnet.connectToSession(host, password);
             }
             if (session && session.success) sessionsOpened++;
-        } catch { }
+        } catch {
+            // Intentionally ignored: this operation is best-effort.
+        }
 
         try {
             for (const process of ns.ps(host)) {
                 if (!MANAGED.has(process.filename)) continue;
                 try {
                     if (ns.kill(process.pid)) processesKilled++;
-                } catch { }
+                } catch {
+                    // Intentionally ignored: this operation is best-effort.
+                }
             }
-        } catch { }
+        } catch {
+            // Intentionally ignored: this operation is best-effort.
+        }
     }
 
     // Remove stale home-side reports so v1.0.5 starts with a clean topology view.
@@ -98,16 +118,25 @@ export async function main(ns) {
         for (const file of ns.ls("home", REPORT_PREFIX)) {
             try {
                 if (ns.rm(file, "home")) reportsRemoved++;
-            } catch { }
+            } catch {
+                // Intentionally ignored: this operation is best-effort.
+            }
         }
-    } catch { }
+    } catch {
+        // Intentionally ignored: this operation is best-effort.
+    }
 
     ns.tprint(
-        "[DNET CLEANUP] checked=" + hostsChecked +
-        " | sessions=" + sessionsOpened +
-        " | killed=" + processesKilled +
-        " | unavailable=" + offlineOrUnavailable +
-        " | reports removed=" + reportsRemoved
+        "[DNET CLEANUP] checked=" +
+            hostsChecked +
+            " | sessions=" +
+            sessionsOpened +
+            " | killed=" +
+            processesKilled +
+            " | unavailable=" +
+            offlineOrUnavailable +
+            " | reports removed=" +
+            reportsRemoved,
     );
     ns.tprint("[DNET CLEANUP] Done. You can now run darknet-manager.js v1.0.5.");
 }
