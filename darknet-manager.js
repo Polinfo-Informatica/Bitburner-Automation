@@ -19,11 +19,13 @@
  * @param {NS} ns
  */
 export async function main(ns) {
-    const VERSION = "1.0.4";
+    try { ns.disableLog("ALL"); } catch { }
+    const VERSION = "1.0.5";
 
     const AGENT = "/Temp/dnet-agent.js";
     const PHISH = "/Temp/dnet-phish.js";
     const PHISH_LAUNCHER = "/Temp/dnet-phish-launcher.js";
+    const RAM_LAUNCHER = "/Temp/dnet-ram-launcher.js";
     const RAM_WORKER = "/Temp/dnet-ram-worker.js";
     const STASIS = "/Temp/dnet-stasis.js";
     const LOOT = "/Temp/dnet-loot.js";
@@ -31,16 +33,19 @@ export async function main(ns) {
     const DB_FILE = "darknet-passwords.txt";
     const REPORT_PREFIX = "/Temp/dnet-report-";
 
-    const REPORT_FRESH_MS = 120000;
-    const STASIS_REFRESH_MS = 15000;
+    const REPORT_FRESH_MS = 180000;
+    const REPORT_RETENTION_MS = 600000;
+    const STASIS_REFRESH_MS = 30000;
+    const STASIS_REPUSH_MS = 300000;
     const SUMMARY_INTERVAL_MS = 30000;
-    const WORKER_REFRESH_MS = 60000;
+    const WORKER_REFRESH_MS = 300000;
 
     // Keep all generated-worker code free of template literals so it can live safely
     // inside these String.raw blocks.
     const PHISH_SOURCE = String.raw`
 /** @param {NS} ns */
 export async function main(ns) {
+    try { ns.disableLog("ALL"); } catch { }
     while (true) {
         try {
             await ns.dnet.phishingAttack();
@@ -54,6 +59,7 @@ export async function main(ns) {
     const RAM_WORKER_SOURCE = String.raw`
 /** @param {NS} ns */
 export async function main(ns) {
+    try { ns.disableLog("ALL"); } catch { }
     let unchanged = 0;
     let lastBlocked = Number.POSITIVE_INFINITY;
 
@@ -84,9 +90,51 @@ export async function main(ns) {
 }
 `;
 
+
+    const RAM_LAUNCHER_SOURCE = String.raw`
+/** @param {NS} ns */
+export async function main(ns) {
+    try { ns.disableLog("ALL"); } catch { }
+    const RAM_WORKER = "/Temp/dnet-ram-worker.js";
+    const host = ns.getHostname();
+    try {
+        const blocked = ns.dnet.getBlockedRam();
+        if (!(blocked > 0)) return;
+        const workerRam = ns.getScriptRam(RAM_WORKER, host);
+        if (!(workerRam > 0)) return;
+        const freeRam = Math.max(0, ns.getServerMaxRam(host) - ns.getServerUsedRam(host));
+        const maxThreads = Math.floor(freeRam / workerRam);
+        if (maxThreads < 1) return;
+
+        let selectedThreads = maxThreads;
+        try {
+            const details = ns.dnet.getServerDetails();
+            const player = ns.getPlayer();
+            let low = 1;
+            let high = maxThreads;
+            let best = maxThreads;
+            while (low <= high) {
+                const mid = Math.floor((low + high) / 2);
+                const expected = ns.formulas.dnet.getExpectedRamBlockRemoved(details, mid, player);
+                if (expected >= blocked * 0.999) {
+                    best = mid;
+                    high = mid - 1;
+                } else {
+                    low = mid + 1;
+                }
+            }
+            selectedThreads = best;
+        } catch { }
+
+        ns.exec(RAM_WORKER, host, selectedThreads, "formula-selected");
+    } catch { }
+}
+`;
+
     const STASIS_SOURCE = String.raw`
 /** @param {NS} ns */
 export async function main(ns) {
+    try { ns.disableLog("ALL"); } catch { }
     const shouldLink = String(ns.args[0] ?? "1") !== "0";
     try { await ns.dnet.setStasisLink(shouldLink); }
     catch { }
@@ -96,6 +144,7 @@ export async function main(ns) {
     const LOOT_SOURCE = String.raw`
 /** @param {NS} ns */
 export async function main(ns) {
+    try { ns.disableLog("ALL"); } catch { }
     const host = ns.getHostname();
 
     try {
@@ -139,22 +188,18 @@ export async function main(ns) {
     const PHISH_LAUNCHER_SOURCE = String.raw`
 /** @param {NS} ns */
 export async function main(ns) {
+    try { ns.disableLog("ALL"); } catch { }
     const PHISH = "/Temp/dnet-phish.js";
     const host = ns.getHostname();
+    if (host === "darkweb") return;
 
     try {
         if (ns.ps(host).some(function (p) { return p.filename === PHISH; })) return;
-
         const ram = ns.getScriptRam(PHISH, host);
         if (!(ram > 0)) return;
-
-        const free = Math.max(
-            0,
-            ns.getServerMaxRam(host) - ns.getServerUsedRam(host)
-        );
-
-        const threads = Math.floor(free / ram);
-        if (threads > 0) ns.exec(PHISH, host, threads);
+        const free = Math.max(0, ns.getServerMaxRam(host) - ns.getServerUsedRam(host));
+        const threads = Math.floor((free * 0.65) / ram);
+        if (threads > 0) ns.exec(PHISH, host, threads, "managed");
     } catch { }
 }
 `;
@@ -162,9 +207,11 @@ export async function main(ns) {
     const AGENT_SOURCE = String.raw`
 /** @param {NS} ns */
 export async function main(ns) {
+    try { ns.disableLog("ALL"); } catch { }
     const AGENT = "/Temp/dnet-agent.js";
     const PHISH = "/Temp/dnet-phish.js";
     const PHISH_LAUNCHER = "/Temp/dnet-phish-launcher.js";
+    const RAM_LAUNCHER = "/Temp/dnet-ram-launcher.js";
     const RAM_WORKER = "/Temp/dnet-ram-worker.js";
     const STASIS = "/Temp/dnet-stasis.js";
     const LOOT = "/Temp/dnet-loot.js";
@@ -174,10 +221,12 @@ export async function main(ns) {
 
     const host = ns.getHostname();
     const selfPassword = String(ns.args[0] ?? "");
-    const REPORT_INTERVAL = 7000;
+    const AGENT_VERSION = "1.0.5";
+    const REPORT_INTERVAL = 15000;
+    const LOOT_INTERVAL = 60000;
+    const LOOP_INTERVAL = 4000;
     const MAX_AUTH_RETRIES = 4;
     const MAX_BRUTE_ATTEMPTS = 1000;
-    const PHISH_UTILIZATION = 0.90;
 
     const DEFAULT_PASSWORDS = ["admin", "password", "0000", "12345"];
     const DOG_NAMES = ["fido", "spot", "rover", "max"];
@@ -212,6 +261,7 @@ export async function main(ns) {
     const foundCredentials = [];
     const cooldownUntil = new Map();
     let lastReport = 0;
+    let lastLoot = 0;
 
     function hashString(s) {
         let h = 2166136261 >>> 0;
@@ -251,7 +301,7 @@ export async function main(ns) {
         const existing = foundCredentials.find(function (x) { return x.host === server && x.password === String(password); });
         if (existing) return;
         foundCredentials.push({ host: server, password: String(password), modelId: modelId || "", ts: Date.now() });
-        if (foundCredentials.length > 200) foundCredentials.shift();
+        if (foundCredentials.length > 100) foundCredentials.shift();
     }
 
     function readLocalDbCandidate(server) {
@@ -421,7 +471,7 @@ export async function main(ns) {
         expr = normalizeExpression(expr);
         let i = 0;
         function skip() { while (/\s/.test(expr[i] || "")) i++; }
-        function number() {
+        function parseAtom() {
             skip();
             let sign = 1;
             if (expr[i] === "+") i++;
@@ -440,13 +490,13 @@ export async function main(ns) {
             return sign * v;
         }
         function muldiv() {
-            let v = number();
+            let v = parseAtom();
             while (true) {
                 skip();
                 const op = expr[i];
                 if (op !== "*" && op !== "/") break;
                 i++;
-                const rhs = number();
+                const rhs = parseAtom();
                 v = op === "*" ? v * rhs : v / rhs;
             }
             return v;
@@ -864,18 +914,18 @@ export async function main(ns) {
 
         // Don't hammer an unsolved interactive model continuously. Phishing on already
         // accessed servers will raise CHA, then we'll retry later with better Heartbleed access.
-        cooldownUntil.set(target, Date.now() + 30000);
+        cooldownUntil.set(target, Date.now() + 60000);
         return null;
     }
 
     async function fullyReallocate(target) {
         let pid = 0;
-        try { pid = ns.exec(RAM_WORKER, target, 1); }
+        try { pid = ns.exec(RAM_LAUNCHER, target, 1); }
         catch { pid = 0; }
 
         if (pid === 0) return;
 
-        for (let i = 0; i < 1200; i++) {
+        for (let i = 0; i < 120; i++) {
             let blocked = 0;
             try { blocked = ns.dnet.getBlockedRam(target); }
             catch { return; }
@@ -888,7 +938,7 @@ export async function main(ns) {
     async function deployChild(target, password) {
         try {
             await ns.scp(
-                [AGENT, PHISH, PHISH_LAUNCHER, RAM_WORKER, STASIS, LOOT, PLAN, DB_FILE],
+                [AGENT, PHISH, PHISH_LAUNCHER, RAM_LAUNCHER, RAM_WORKER, STASIS, LOOT, PLAN, DB_FILE],
                 target,
                 host
             );
@@ -903,7 +953,7 @@ export async function main(ns) {
         catch { lootPid = 0; }
 
         if (lootPid !== 0) {
-            for (let i = 0; i < 600; i++) {
+            for (let i = 0; i < 40; i++) {
                 let running = false;
                 try {
                     running = ns.ps(target).some(function (p) { return p.pid === lootPid; });
@@ -914,22 +964,28 @@ export async function main(ns) {
         }
 
         try {
-            const existing = ns.ps(target).some(function (p) {
-                return p.filename === AGENT;
-            });
-            if (existing) return true;
+            const managed = [AGENT, PHISH, PHISH_LAUNCHER, RAM_LAUNCHER, RAM_WORKER, STASIS, LOOT];
+            const processes = ns.ps(target);
+            const existing = processes.find(function (p) { return p.filename === AGENT; });
+            if (existing && String(existing.args && existing.args[1] || "") === AGENT_VERSION) return true;
+            for (const proc of processes) {
+                if (managed.includes(proc.filename)) {
+                    try { ns.kill(proc.pid); } catch { }
+                }
+            }
+            if (processes.length > 0) await ns.sleep(50);
         } catch { }
 
-        try { return ns.exec(AGENT, target, 1, password) !== 0; }
+        try { return ns.exec(AGENT, target, 1, password, AGENT_VERSION) !== 0; }
         catch { return false; }
     }
 
     async function lootSelf() {
+        if (Date.now() - lastLoot < LOOT_INTERVAL) return;
+        lastLoot = Date.now();
         try {
-            const running = ns.ps(host).some(function (p) {
-                return p.filename === LOOT;
-            });
-            if (!running) ns.exec(LOOT, host, 1);
+            const running = ns.ps(host).some(function (p) { return p.filename === LOOT; });
+            if (!running) ns.exec(LOOT, host, 1, "periodic");
         } catch { }
     }
 
@@ -991,10 +1047,11 @@ export async function main(ns) {
                 depth: details ? Number(details.depth ?? -1) : -1,
                 difficulty: details ? Number(details.difficulty ?? -1) : -1,
                 modelId: details ? String(details.modelId || "") : "",
+                agentVersion: AGENT_VERSION,
                 requiredCharismaSkill: details ? Number(details.requiredCharismaSkill ?? -1) : -1,
                 isStationary: details ? !!details.isStationary : false,
                 neighbors: safeProbe(),
-                found: foundCredentials.slice(-100),
+                found: foundCredentials.slice(-25),
                 error: errorText ? String(errorText) : ""
             };
             const file = reportFileFor(host);
@@ -1013,10 +1070,10 @@ export async function main(ns) {
             const neighbors = safeProbe();
             for (const target of neighbors) {
                 if (target === host) continue;
-                let alreadyRunning = false;
-                try { alreadyRunning = ns.ps(target).some(function (p) { return p.filename === AGENT; }); }
+                let currentAgent = null;
+                try { currentAgent = ns.ps(target).find(function (p) { return p.filename === AGENT; }) || null; }
                 catch { }
-                if (alreadyRunning) continue;
+                if (currentAgent && String(currentAgent.args && currentAgent.args[1] || "") === AGENT_VERSION) continue;
 
                 const password = await solveTarget(target);
                 if (password === null) continue;
@@ -1031,7 +1088,7 @@ export async function main(ns) {
 
         try {
             // Wake quickly enough to catch mutations but don't busy-loop.
-            await ns.sleep(1500);
+            await ns.sleep(LOOP_INTERVAL);
         } catch { }
     }
 }
@@ -1047,6 +1104,7 @@ export async function main(ns) {
         await ns.write(AGENT, AGENT_SOURCE, "w");
         await ns.write(PHISH, PHISH_SOURCE, "w");
         await ns.write(PHISH_LAUNCHER, PHISH_LAUNCHER_SOURCE, "w");
+        await ns.write(RAM_LAUNCHER, RAM_LAUNCHER_SOURCE, "w");
         await ns.write(RAM_WORKER, RAM_WORKER_SOURCE, "w");
         await ns.write(STASIS, STASIS_SOURCE, "w");
         await ns.write(LOOT, LOOT_SOURCE, "w");
@@ -1071,13 +1129,24 @@ export async function main(ns) {
 
     function readReports() {
         const reports = [];
+        const now = Date.now();
         for (const file of ns.ls("home", REPORT_PREFIX)) {
             try {
                 const r = JSON.parse(ns.read(file));
-                if (r && r.host) {
-                    try { r.maxRam = ns.getServerMaxRam(r.host); } catch { }
-                    reports.push(r);
+                if (!r || !r.host) continue;
+                if (now - Number(r.ts || 0) > REPORT_RETENTION_MS) {
+                    try { ns.rm(file, "home"); } catch { }
+                    continue;
                 }
+                try {
+                    const server = ns.getServer(r.host);
+                    if (server && server.isOnline === false) continue;
+                    if (server) {
+                        r.maxRam = Number(server.maxRam || 0);
+                        r.usedRam = Number(server.ramUsed || 0);
+                    }
+                } catch { }
+                reports.push(r);
             } catch { }
         }
         return reports;
@@ -1121,17 +1190,22 @@ export async function main(ns) {
 
     async function seedDarkweb() {
         try {
-            if (ns.ps("darkweb").some(function (p) { return p.filename === AGENT; })) return true;
+            const running = ns.ps("darkweb").find(function (p) { return p.filename === AGENT; });
+            if (running && String(running.args && running.args[1] || "") === VERSION) return true;
+            if (running) {
+                try { ns.kill(running.pid); } catch { }
+                await ns.sleep(50);
+            }
         } catch { }
 
-        let auth = null;
+        let auth;
         try { auth = await ns.dnet.authenticate("darkweb", ""); }
         catch { return false; }
         if (!auth || !auth.success) return false;
 
         try {
-            await ns.scp([AGENT, PHISH, PHISH_LAUNCHER, RAM_WORKER, STASIS, LOOT, PLAN, DB_FILE], "darkweb", "home");
-            const pid = ns.exec(AGENT, "darkweb", 1, "");
+            await ns.scp([AGENT, PHISH, PHISH_LAUNCHER, RAM_LAUNCHER, RAM_WORKER, STASIS, LOOT, PLAN, DB_FILE], "darkweb", "home");
+            const pid = ns.exec(AGENT, "darkweb", 1, "", VERSION);
             if (pid) log("Seeded recursive crawler on darkweb (PID " + pid + ").", false);
             return pid !== 0;
         } catch {
@@ -1139,19 +1213,17 @@ export async function main(ns) {
         }
     }
 
-    async function pushControlFiles(host, password) {
+    async function pushPlanFiles(host, password) {
         try {
             const session = ns.dnet.connectToSession(host, password);
             if (!session || !session.success) return false;
-            await ns.scp([AGENT, PHISH, PHISH_LAUNCHER, RAM_WORKER, STASIS, LOOT, PLAN, DB_FILE], host, "home");
+            await ns.scp([PLAN, STASIS], host, "home");
             return true;
-        } catch {
-            return false;
-        }
+        } catch { return false; }
     }
 
     async function updateStasisPlan(db, reports) {
-        let limit = 0;
+        let limit;
         try { limit = ns.dnet.getStasisLinkLimit(); }
         catch { return; }
 
@@ -1167,30 +1239,34 @@ export async function main(ns) {
         const candidates = Array.from(latest.values()).sort(function (a, b) {
             const ram = Number(b.maxRam || 0) - Number(a.maxRam || 0);
             if (ram !== 0) return ram;
+            const blocked = Number(a.blockedRam || 0) - Number(b.blockedRam || 0);
+            if (blocked !== 0) return blocked;
             return Number(b.depth || -1) - Number(a.depth || -1);
         });
         const desired = candidates.slice(0, Math.max(0, limit)).map(function (r) { return r.host; });
+
+        let previous = { desired: [], ts: 0 };
+        try {
+            const raw = ns.read(PLAN);
+            if (raw) previous = JSON.parse(raw);
+        } catch { }
+        const oldDesired = Array.isArray(previous.desired) ? previous.desired : [];
+        const changed = JSON.stringify(oldDesired) !== JSON.stringify(desired);
+        const needsRepush = now - Number(previous.ts || 0) >= STASIS_REPUSH_MS;
+        if (!changed && !needsRepush) return;
+
         await ns.write(PLAN, JSON.stringify({ desired: desired, ts: now }), "w");
-
-        // A session is enough to SCP the plan at any distance. Each running agent
-        // then applies/removes stasis locally so remote-exec restrictions don't matter.
-        for (const r of candidates) {
-            const entry = db[r.host];
-            const password = typeof r.password === "string" ? r.password : entry && entry.password;
-            if (typeof password !== "string") continue;
-            await pushControlFiles(r.host, password);
-        }
-
-        // Also push the plan to currently linked servers even if their report just became stale,
-        // so obsolete stasis links can remove themselves.
         let linked = [];
         try { linked = ns.dnet.getStasisLinkedServers(false); } catch { }
-        for (const h of linked) {
-            if (candidates.some(function (r) { return r.host === h; })) continue;
+        const targets = Array.from(new Set(desired.concat(linked)));
+        for (const h of targets) {
+            const report = latest.get(h);
             const entry = db[h];
-            if (!entry || typeof entry.password !== "string") continue;
-            await pushControlFiles(h, entry.password);
+            const password = report && typeof report.password === "string" ? report.password : entry && entry.password;
+            if (typeof password !== "string") continue;
+            await pushPlanFiles(h, password);
         }
+        if (changed) log("Stasis plan -> [" + desired.join(", ") + "]", false);
     }
 
     function summary(db, reports) {
@@ -1272,6 +1348,6 @@ export async function main(ns) {
             log("Suppressed manager error: " + String(e), false);
         }
 
-        await ns.sleep(2000);
+        await ns.sleep(5000);
     }
 }

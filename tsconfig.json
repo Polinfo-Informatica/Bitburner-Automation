@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": false,
+    "skipLibCheck": true,
+    "types": []
+  },
+  "include": ["darknet-manager.js", "types/global.d.ts", "types/NetscriptDefinitions.d.ts"],
+  "exclude": ["node_modules"]
+}

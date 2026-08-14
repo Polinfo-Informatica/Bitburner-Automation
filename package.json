@@ -1,0 +1,17 @@
+{
+  "name": "bitburner-automation",
+  "private": true,
+  "scripts": {
+    "syntax": "node --check darknet-manager.js && node tools/validate-generated-workers.mjs",
+    "ram-collisions": "node tools/check-bitburner-ram-collisions.mjs",
+    "typecheck": "tsc -p tsconfig.json",
+    "lint": "eslint darknet-manager.js tools/*.mjs",
+    "check": "npm run syntax && npm run ram-collisions && npm run typecheck && npm run lint"
+  },
+  "devDependencies": {
+    "@eslint/js": "latest",
+    "eslint": "latest",
+    "globals": "latest",
+    "typescript": "latest"
+  }
+}
