@@ -13,7 +13,7 @@ const RUNTIME_FILES = [
     "darknet-snapshot.js",
 ];
 
-export function autocomplete(data, _args) {
+export function autocomplete(data) {
     data.flags(ARGS_SCHEMA);
     return [];
 }

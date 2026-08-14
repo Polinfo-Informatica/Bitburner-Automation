@@ -4,7 +4,7 @@ const ARGS_SCHEMA = [
     ["help", false],
 ];
 
-export function autocomplete(data, _args) {
+export function autocomplete(data) {
     data.flags(ARGS_SCHEMA);
     return [];
 }
