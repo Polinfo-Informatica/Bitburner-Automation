@@ -10,6 +10,6 @@
     "skipLibCheck": true,
     "types": []
   },
-  "include": ["darknet-manager.js", "types/global.d.ts", "types/NetscriptDefinitions.d.ts"],
+  "include": ["darknet-manager.js", "darknet-cleanup.js", "types/global.d.ts", "types/NetscriptDefinitions.d.ts"],
   "exclude": ["node_modules"]
 }
