@@ -1,0 +1,19 @@
+{
+    "eslint.useFlatConfig": true,
+    "eslint.workingDirectories": [
+        {
+            "mode": "auto"
+        }
+    ],
+    "prettier.requireConfig": true,
+    "prettier.configPath": ".prettierrc.json",
+    "files.eol": "\r\n",
+    "[javascript]": {
+        "editor.defaultFormatter": "esbenp.prettier-vscode",
+        "editor.formatOnSave": true
+    },
+    "[javascriptreact]": {
+        "editor.defaultFormatter": "esbenp.prettier-vscode",
+        "editor.formatOnSave": true
+    }
+}
