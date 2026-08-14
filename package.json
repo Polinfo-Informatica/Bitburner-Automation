@@ -6,12 +6,17 @@
     "ram-collisions": "node tools/check-bitburner-ram-collisions.mjs",
     "typecheck": "tsc -p tsconfig.json",
     "lint": "eslint darknet-manager.js darknet-cleanup.js tools/*.mjs",
-    "check": "npm run syntax && npm run ram-collisions && npm run typecheck && npm run lint"
+    "format": "prettier --write darknet-manager.js darknet-cleanup.js tools/*.mjs eslint.config.mjs package.json tsconfig.json .prettierrc.json",
+    "format:check": "prettier --check darknet-manager.js darknet-cleanup.js tools/*.mjs eslint.config.mjs package.json tsconfig.json .prettierrc.json",
+    "check": "npm run syntax && npm run ram-collisions && npm run typecheck && npm run lint && npm run format:check"
   },
   "devDependencies": {
     "@eslint/js": "latest",
     "eslint": "latest",
+    "eslint-config-prettier": "latest",
+    "eslint-plugin-prettier": "latest",
     "globals": "latest",
+    "prettier": "latest",
     "typescript": "latest"
   }
 }
