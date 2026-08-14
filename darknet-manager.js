@@ -1,3 +1,4 @@
+/** @type {[string, string | number | boolean | string[]][]} */
 const ARGS_SCHEMA = [
     ["no-phish", false],
     ["phish-hosts", 4],

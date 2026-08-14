@@ -1,3 +1,4 @@
+/** @type {[string, string | number | boolean | string[]][]} */
 const ARGS_SCHEMA = [
     ["branch", "main"],
     ["no-self", false],
