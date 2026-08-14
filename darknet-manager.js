@@ -19,7 +19,7 @@
  * @param {NS} ns
  */
 export async function main(ns) {
-    const VERSION = "1.0.3";
+    const VERSION = "1.0.4";
 
     const AGENT = "/Temp/dnet-agent.js";
     const PHISH = "/Temp/dnet-phish.js";
@@ -299,7 +299,7 @@ export async function main(ns) {
         return null;
     }
 
-    async function attempt(target, password, wantFeedback) {
+    async function tryPassword(target, password, wantFeedback) {
         password = String(password);
         let last = null;
         for (let retry = 0; retry < MAX_AUTH_RETRIES; retry++) {
@@ -320,7 +320,7 @@ export async function main(ns) {
 
     async function tryCandidates(target, candidates, modelId) {
         for (const candidate of unique(candidates)) {
-            const r = await attempt(target, candidate, false);
+            const r = await tryPassword(target, candidate, false);
             if (r.success) {
                 recordCredential(target, candidate, modelId);
                 return candidate;
@@ -492,7 +492,7 @@ export async function main(ns) {
         let sentinel = null;
 
         for (const c of charset) {
-            const r = await attempt(target, c.repeat(n), true);
+            const r = await tryPassword(target, c.repeat(n), true);
             if (r.success) return c.repeat(n);
             const score = parseMastermind(r.feedback);
             if (!score) return null;
@@ -513,7 +513,7 @@ export async function main(ns) {
                 if (pair[1] <= 0) continue;
                 const guess = Array(n).fill(sentinel);
                 guess[pos] = c;
-                const r = await attempt(target, guess.join(""), true);
+                const r = await tryPassword(target, guess.join(""), true);
                 if (r.success) return guess.join("");
                 const score = parseMastermind(r.feedback);
                 if (!score) return null;
@@ -529,7 +529,7 @@ export async function main(ns) {
             if (!placed) return null;
         }
         const final = result.join("");
-        const r = await attempt(target, final, false);
+        const r = await tryPassword(target, final, false);
         return r.success ? final : null;
     }
 
@@ -538,7 +538,7 @@ export async function main(ns) {
         const charset = charsetFor(details.passwordFormat);
         const result = Array(n).fill(null);
         for (const c of charset) {
-            const r = await attempt(target, c.repeat(n), true);
+            const r = await tryPassword(target, c.repeat(n), true);
             if (r.success) return c.repeat(n);
             if (!r.feedback || typeof r.feedback.data !== "string") return null;
             const flags = r.feedback.data.split(",");
@@ -549,7 +549,7 @@ export async function main(ns) {
         }
         if (result.some(function (x) { return x === null; })) return null;
         const final = result.join("");
-        const r = await attempt(target, final, false);
+        const r = await tryPassword(target, final, false);
         return r.success ? final : null;
     }
 
@@ -557,7 +557,7 @@ export async function main(ns) {
         const n = details.passwordLength;
         if (details.passwordFormat !== "numeric") return null;
         const zero = "0".repeat(n);
-        const base = await attempt(target, zero, true);
+        const base = await tryPassword(target, zero, true);
         if (base.success) return zero;
         const rms0 = parseRms(base.feedback);
         if (!Number.isFinite(rms0)) return null;
@@ -567,7 +567,7 @@ export async function main(ns) {
             const chars = Array(n).fill("0");
             chars[pos] = "9";
             const guess = chars.join("");
-            const r = await attempt(target, guess, true);
+            const r = await tryPassword(target, guess, true);
             if (r.success) return guess;
             const rms = parseRms(r.feedback);
             if (!Number.isFinite(rms)) return null;
@@ -576,7 +576,7 @@ export async function main(ns) {
             digits.push(String(actual));
         }
         const final = digits.join("");
-        const r = await attempt(target, final, false);
+        const r = await tryPassword(target, final, false);
         return r.success ? final : null;
     }
 
@@ -586,7 +586,7 @@ export async function main(ns) {
         for (let steps = 0; steps < 80 && low <= high; steps++) {
             const mid = Math.floor((low + high) / 2);
             const pw = String(mid);
-            const r = await attempt(target, pw, true);
+            const r = await tryPassword(target, pw, true);
             if (r.success) return pw;
             if (!r.feedback) return null;
             const data = String(r.feedback.data || "").toUpperCase();
@@ -612,7 +612,7 @@ export async function main(ns) {
             let found = false;
             for (const c of charset) {
                 const guess = prefix + c + filler.repeat(n - pos - 1);
-                const r = await attempt(target, guess, true);
+                const r = await tryPassword(target, guess, true);
                 if (r.success) return guess;
                 if (!r.feedback) return null;
                 const msg = String(r.feedback.message || "");
@@ -627,12 +627,12 @@ export async function main(ns) {
             }
             if (!found) return null;
         }
-        const r = await attempt(target, prefix, false);
+        const r = await tryPassword(target, prefix, false);
         return r.success ? prefix : null;
     }
 
     async function solveDivisibility(target, details) {
-        let r = await attempt(target, "1", true);
+        let r = await tryPassword(target, "1", true);
         if (r.success) return "1";
         let product = 1n;
         const primes = SMALL_PRIMES.concat(LARGE_PRIMES);
@@ -642,7 +642,7 @@ export async function main(ns) {
             let power = p;
             let exponent = 0;
             while (power <= maxValue) {
-                r = await attempt(target, power.toString(), true);
+                r = await tryPassword(target, power.toString(), true);
                 if (r.success) return power.toString();
                 const fb = r.feedback;
                 if (!fb) break;
@@ -655,7 +655,7 @@ export async function main(ns) {
             for (let i = 0; i < exponent; i++) product *= p;
         }
         const candidate = product.toString();
-        r = await attempt(target, candidate, false);
+        r = await tryPassword(target, candidate, false);
         return r.success ? candidate : null;
     }
 
@@ -676,7 +676,7 @@ export async function main(ns) {
         const mods = [31,29,23,19,17,13,11,7,5,3,2];
         const residues = [];
         for (const m of mods) {
-            const r = await attempt(target, String(m), true);
+            const r = await tryPassword(target, String(m), true);
             if (r.success) return String(m).padStart(details.passwordLength, "0");
             if (!r.feedback) return null;
             const value = Number(r.feedback.data);
@@ -695,13 +695,13 @@ export async function main(ns) {
         }
         x = ((x % M) + M) % M;
         const candidate = x.toString().padStart(details.passwordLength, "0");
-        const r = await attempt(target, candidate, false);
+        const r = await tryPassword(target, candidate, false);
         return r.success ? candidate : null;
     }
 
     async function solvePacketSniffer(target, details) {
         // First intentionally fail once to force packet data into an auth log.
-        await attempt(target, "", true);
+        await tryPassword(target, "", true);
         for (let round = 0; round < 20; round++) {
             try {
                 const hb = await ns.dnet.heartbleed(target, { peek: false, logsToCapture: 8 });
@@ -712,12 +712,12 @@ export async function main(ns) {
                         const escaped = target.replace(/[.*+?^$(){}|[\]\\]/g, "\\$&");
                         const named = line.match(new RegExp(escaped + ":([^\\s]+)"));
                         if (named) {
-                            const r = await attempt(target, named[1], false);
+                            const r = await tryPassword(target, named[1], false);
                             if (r.success) return named[1];
                         }
                         const pass = line.match(/Logging in with passcode:\s*([^\s]+)\s*\.\.\./i);
                         if (pass) {
-                            const r = await attempt(target, pass[1], false);
+                            const r = await tryPassword(target, pass[1], false);
                             if (r.success) return pass[1];
                         }
                     }
@@ -733,7 +733,7 @@ export async function main(ns) {
         const max = Math.min(MAX_BRUTE_ATTEMPTS, Math.pow(10, details.passwordLength));
         for (let i = 0; i < max; i++) {
             const candidate = String(i).padStart(details.passwordLength, "0");
-            const r = await attempt(target, candidate, false);
+            const r = await tryPassword(target, candidate, false);
             if (r.success) return candidate;
         }
         return null;
@@ -1219,6 +1219,11 @@ export async function main(ns) {
     log("Dark Net manager started. Persistent credential DB: " + DB_FILE, true);
     log("Generated crawler/RAM/loot/phishing/stasis workers automatically under /Temp.", true);
     log("Generated crawler RAM: " + ns.format.ram(agentRam) + " (darkweb capacity: 16 GB).", true);
+    try {
+        const dwMax = ns.getServerMaxRam("darkweb");
+        const dwUsed = ns.getServerUsedRam("darkweb");
+        log("darkweb RAM now: max=" + ns.format.ram(dwMax) + " | used=" + ns.format.ram(dwUsed) + " | free=" + ns.format.ram(Math.max(0, dwMax - dwUsed)) + ".", true);
+    } catch { }
 
     if (!(agentRam > 0) || agentRam > 16) {
         log("ERROR: generated crawler exceeds the 16 GB darkweb gateway limit; refusing to retry-loop.", true);
