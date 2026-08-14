@@ -36,7 +36,7 @@ export async function main(ns) {
     } catch {
         // Intentionally ignored: this operation is best-effort.
     }
-    const VERSION = "1.2.0";
+    const VERSION = "1.2.1";
 
     const AGENT = "/Temp/dnet-agent.js";
     const PHISH = "/Temp/dnet-phish.js";
@@ -344,15 +344,20 @@ export async function main(ns) {
     const DB_FILE = "darknet-passwords.txt";
     const REPORT_PREFIX = "/Temp/dnet-report-";
     const VISIT_MARKER = "/Temp/dnet-crawl-marker.txt";
+    const COMPLETION_PREFIX = "/Temp/dnet-complete-";
 
     const host = ns.getHostname();
     const selfPassword = String(ns.args[0] ?? "");
-    const AGENT_VERSION = "1.2.0";
+    const AGENT_VERSION = "1.2.1";
     const crawlId = String(ns.args[2] ?? "");
     const crawlDepth = Math.max(0, Math.floor(Number(ns.args[3] || 0)));
+    const parentCompletionFile = String(ns.args[4] ?? "");
     const REPORT_INTERVAL = 15000;
     const LOOT_INTERVAL = 60000;
     const CHILD_POLL_MS = 2000;
+    const MAX_CHILD_WAIT_MS = 900000;
+    const COMPLETION_RETRY_MS = 1000;
+    const MAX_COMPLETION_SIGNAL_ATTEMPTS = 60;
     const MAX_CRAWL_DEPTH = 16;
     const MIN_DNET_REQUEST_INTERVAL = 750;
     const MAX_AUTH_RETRIES = 4;
@@ -1134,21 +1139,67 @@ function decodeBinary(data) {
         }
     }
 
-    async function waitForChild(target, childPid) {
+    function completionFileFor(target) {
+        return COMPLETION_PREFIX + hashString(crawlId + "|" + target) + ".txt";
+    }
+
+    async function signalParentCompletion() {
+        if (!parentCompletionFile) return;
+        try {
+            await ns.write(
+                parentCompletionFile,
+                JSON.stringify({
+                    crawlId: crawlId,
+                    host: host,
+                    phase: phase,
+                    ts: Date.now()
+                }),
+                "w"
+            );
+            for (let attempt = 0; attempt < MAX_COMPLETION_SIGNAL_ATTEMPTS; attempt++) {
+                let copied = false;
+                try { copied = await ns.scp(parentCompletionFile, "home", host); }
+                catch {
+                    // Intentionally ignored: retry below.
+                }
+                if (copied) {
+                    ns.rm(parentCompletionFile, host);
+                    return;
+                }
+                await ns.sleep(COMPLETION_RETRY_MS);
+            }
+        } catch {
+            // Intentionally ignored: the parent has a fail-safe timeout.
+        }
+    }
+
+    async function waitForChild(target, childPid, completionFile) {
         phase = "wait-child";
         activeTarget = target;
+        const deadline = Date.now() + MAX_CHILD_WAIT_MS;
 
         for (;;) {
-            let running = false;
             try {
-                running = ns.ps(target).some(function (process) {
-                    return process.pid === childPid;
-                });
+                if (ns.fileExists(completionFile, "home")) {
+                    ns.rm(completionFile, "home");
+                    lastProgress = Date.now();
+                    return true;
+                }
             } catch {
-                return;
+                // Intentionally ignored: retry until completion or timeout.
             }
-            if (!running) return;
+            if (Date.now() >= deadline) {
+                try { ns.kill(childPid); }
+                catch {
+                    // Intentionally ignored: the target may already be offline.
+                }
+                phase = "child-timeout";
+                await saveReport("Timed out waiting for child " + target + ".");
+                return false;
+            }
             if (Date.now() - lastReport >= REPORT_INTERVAL) {
+                await maybeToggleStasis();
+                ensurePhishing();
                 await saveReport("");
             }
             await ns.sleep(CHILD_POLL_MS);
@@ -1157,6 +1208,7 @@ function decodeBinary(data) {
 
     async function deployChild(target, password) {
         if (!crawlId || crawlDepth >= MAX_CRAWL_DEPTH) return false;
+        const completionFile = completionFileFor(target);
 
         try {
             await ns.write(VISIT_MARKER, crawlId, "w");
@@ -1209,8 +1261,11 @@ function decodeBinary(data) {
                 String(existing.args && existing.args[1] || "") === AGENT_VERSION &&
                 String(existing.args && existing.args[2] || "") === crawlId
             ) {
-                await waitForChild(target, existing.pid);
-                return true;
+                return await waitForChild(
+                    target,
+                    existing.pid,
+                    completionFile
+                );
             }
             for (const proc of processes) {
                 if (managed.includes(proc.filename)) {
@@ -1233,14 +1288,14 @@ function decodeBinary(data) {
                 password,
                 AGENT_VERSION,
                 crawlId,
-                crawlDepth + 1
+                crawlDepth + 1,
+                completionFile
             );
         } catch {
             childPid = 0;
         }
         if (childPid === 0) return false;
-        await waitForChild(target, childPid);
-        return true;
+        return await waitForChild(target, childPid, completionFile);
     }
 
     async function lootSelf() {
@@ -1428,8 +1483,9 @@ function decodeBinary(data) {
                 const password = await solveTarget(target);
                 if (password === null) continue;
                 phase = "deploy";
-                await deployChild(target, password);
-                lastProgress = Date.now();
+                if (await deployChild(target, password)) {
+                    lastProgress = Date.now();
+                }
             }
         }
 
@@ -1444,6 +1500,7 @@ function decodeBinary(data) {
         phase = "failed";
         await saveReport(String(e));
     }
+    await signalParentCompletion();
 }
 `;
 
@@ -1658,10 +1715,22 @@ function decodeBinary(data) {
     }
 
     let crawlWasRunning = false;
+    let currentCrawlId = "";
+    let descendantDrainNoticeShown = false;
     let nextCrawlAt = 0;
 
-    async function seedDarkweb() {
+    async function seedDarkweb(reports) {
         let running = null;
+        const now = Date.now();
+        const activeReports = reports.filter(function (report) {
+            return (
+                report &&
+                report.host &&
+                report.agentVersion === VERSION &&
+                !report.completed &&
+                now - Number(report.ts || 0) <= REPORT_FRESH_MS
+            );
+        });
         try {
             running = ns.ps("darkweb").find(function (p) {
                 return p.filename === AGENT;
@@ -1671,6 +1740,10 @@ function decodeBinary(data) {
                 String((running.args && running.args[1]) || "") === VERSION
             ) {
                 crawlWasRunning = true;
+                currentCrawlId = String(
+                    (running.args && running.args[2]) || currentCrawlId
+                );
+                descendantDrainNoticeShown = false;
                 return true;
             }
             if (running) {
@@ -1682,14 +1755,35 @@ function decodeBinary(data) {
                 await ns.sleep(50);
                 running = null;
                 crawlWasRunning = false;
+                currentCrawlId = "";
+                descendantDrainNoticeShown = false;
                 nextCrawlAt = 0;
             }
         } catch {
             // Intentionally ignored: this operation is best-effort.
         }
 
+        if (!running && activeReports.length > 0) {
+            crawlWasRunning = true;
+            if (!currentCrawlId) {
+                currentCrawlId = String(activeReports[0].crawlId || "");
+            }
+            if (!descendantDrainNoticeShown) {
+                log(
+                    "Root crawler exited; waiting for " +
+                        activeReports.length +
+                        " descendant stack agent(s) before another crawl.",
+                    false
+                );
+                descendantDrainNoticeShown = true;
+            }
+            return false;
+        }
+
         if (!running && crawlWasRunning) {
             crawlWasRunning = false;
+            currentCrawlId = "";
+            descendantDrainNoticeShown = false;
             nextCrawlAt = Date.now() + CRAWL_RESTART_DELAY_MS;
             log(
                 "Bounded crawl completed; next mutation rescan in " +
@@ -1732,6 +1826,8 @@ function decodeBinary(data) {
             const pid = ns.exec(AGENT, "darkweb", 1, "", VERSION, crawlId, 0);
             if (pid) {
                 crawlWasRunning = true;
+                currentCrawlId = crawlId;
+                descendantDrainNoticeShown = false;
                 log(
                     "Started bounded serial crawl on darkweb (PID " +
                         pid +
@@ -1752,6 +1848,19 @@ function decodeBinary(data) {
             const session = ns.dnet.connectToSession(host, password);
             if (!session || !session.success) return false;
             await ns.scp([PLAN, STASIS], host, "home");
+            try {
+                const plan = JSON.parse(ns.read(PLAN) || "{}");
+                const shouldLink =
+                    Array.isArray(plan.desired) && plan.desired.includes(host);
+                const alreadyRunning = ns.ps(host).some(function (process) {
+                    return process.filename === STASIS;
+                });
+                if (!alreadyRunning) {
+                    ns.exec(STASIS, host, 1, shouldLink ? "1" : "0");
+                }
+            } catch {
+                // A remote exec can fail until the host is linked or adjacent.
+            }
             return true;
         } catch {
             return false;
@@ -1777,6 +1886,21 @@ function decodeBinary(data) {
             const session = ns.dnet.connectToSession(host, password);
             if (!session || !session.success) return false;
             await ns.scp([PHISH_PLAN, PHISH, PHISH_LAUNCHER], host, "home");
+            try {
+                const plan = readCurrentPhishPlan();
+                const allowed = plan.desired.includes(host);
+                const alreadyRunning = ns.ps(host).some(function (process) {
+                    return (
+                        process.filename === PHISH ||
+                        process.filename === PHISH_LAUNCHER
+                    );
+                });
+                if (allowed && !alreadyRunning) {
+                    ns.exec(PHISH_LAUNCHER, host, 1, "manager-plan");
+                }
+            } catch {
+                // A remote exec can fail until the host is linked or adjacent.
+            }
             return true;
         } catch {
             return false;
@@ -1989,12 +2113,22 @@ function decodeBinary(data) {
             // Intentionally ignored: this operation is best-effort.
         }
         const phishPlan = readCurrentPhishPlan();
-        const phishReports = list.filter(function (report) {
-            return Number(report.phishPid || 0) > 0;
-        });
-        const phishThreads = phishReports.reduce(function (sum, report) {
-            return sum + Number(report.phishThreads || 0);
-        }, 0);
+        const phishHostsRunning = [];
+        let phishThreads = 0;
+        for (const host of phishPlan.desired.slice(0, PHISH_HOST_HARD_LIMIT)) {
+            try {
+                const processes = ns.ps(host).filter(function (process) {
+                    return process.filename === PHISH;
+                });
+                if (processes.length === 0) continue;
+                phishHostsRunning.push(host);
+                for (const process of processes) {
+                    phishThreads += Number(process.threads || 0);
+                }
+            } catch {
+                // Intentionally ignored: the host may have just gone offline.
+            }
+        }
         const activeCrawlReports = list.filter(function (report) {
             return report.agentVersion === VERSION && !report.completed;
         });
@@ -2011,16 +2145,16 @@ function decodeBinary(data) {
             activeAgents: activeCrawlReports.length,
             crawlerStack: activeCrawlReports.length,
             crawlerStackLimit: MAX_CRAWL_STACK,
-            discoveredHosts: list.length,
+            freshHosts: list.length,
+            discoveredHosts: Object.keys(db).length,
+            knownHosts: Object.keys(db).length,
             knownPasswords: Object.keys(db).length,
             discoveredRam: totalRam,
             managedProcessesReported: list.reduce(function (sum, report) {
                 return sum + Number(report.managedProcesses || 0);
             }, 0),
             phishPlan: phishPlan,
-            phishHostsReported: phishReports.map(function (report) {
-                return report.host;
-            }),
+            phishHostsReported: phishHostsRunning,
             phishThreadsReported: phishThreads,
             phases: phases,
             stasis: linked,
@@ -2053,14 +2187,14 @@ function decodeBinary(data) {
                 activeCrawlReports.length +
                 "/" +
                 MAX_CRAWL_STACK +
-                " | discovered hosts=" +
+                " | fresh hosts=" +
                 list.length +
                 " | known passwords=" +
                 Object.keys(db).length +
                 " | discovered Dark Net RAM=" +
                 ramText +
                 " | phishing=" +
-                phishReports.length +
+                phishHostsRunning.length +
                 "/" +
                 configuredPhishHosts +
                 " hosts (" +
@@ -2169,9 +2303,9 @@ function decodeBinary(data) {
                 lastWorkerRefresh = Date.now();
             }
 
-            await seedDarkweb();
             const reports = readReports();
             await ingestReports(db, reports);
+            await seedDarkweb(reports);
 
             if (Date.now() - lastPhish >= PHISH_REFRESH_MS) {
                 await updatePhishingPlan(db, reports);

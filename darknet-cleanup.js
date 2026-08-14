@@ -14,9 +14,10 @@ export async function main(ns) {
         // Intentionally ignored: this operation is best-effort.
     }
 
-    const VERSION = "1.2.0";
+    const VERSION = "1.2.1";
     const DB_FILE = "darknet-passwords.txt";
     const REPORT_PREFIX = "/Temp/dnet-report-";
+    const COMPLETION_PREFIX = "/Temp/dnet-complete-";
     const PHISH_PLAN = "/Temp/dnet-phish-plan.txt";
     const MANAGER = "darknet-manager.js";
     const CLEANUP_PASSES = 4;
@@ -75,6 +76,7 @@ export async function main(ns) {
 
     let processesKilled = 0;
     let managersKilled = 0;
+    let completionFilesRemoved = 0;
     const checkedHosts = new Set();
     const unavailableHosts = new Set();
 
@@ -110,6 +112,13 @@ export async function main(ns) {
                         // Intentionally ignored: a prior pass may have killed it.
                     }
                 }
+                for (const file of ns.ls(host, COMPLETION_PREFIX)) {
+                    try {
+                        if (ns.rm(file, host)) completionFilesRemoved++;
+                    } catch {
+                        // Intentionally ignored: a prior pass may have removed it.
+                    }
+                }
             } catch {
                 unavailableHosts.add(host);
             }
@@ -117,7 +126,7 @@ export async function main(ns) {
         if (pass < CLEANUP_PASSES) await ns.sleep(1000);
     }
 
-    // Any v1.2.0 worker that briefly survives a race sees an empty plan and
+    // Any v1.2.1 worker that briefly survives a race sees an empty plan and
     // refuses to start phishing when it next receives the home control file.
     try {
         await ns.write(
@@ -162,7 +171,9 @@ export async function main(ns) {
             " | unavailable=" +
             unavailableHosts.size +
             " | reports removed=" +
-            reportsRemoved
+            reportsRemoved +
+            " | completion files removed=" +
+            completionFilesRemoved
     );
     ns.tprint(
         "[DNET CLEANUP " +

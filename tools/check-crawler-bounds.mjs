@@ -17,7 +17,7 @@ const VISIT_MARKER = "/Temp/dnet-crawl-marker.txt";
 const PLAN = "/Temp/dnet-stasis-plan.txt";
 const PHISH_PLAN = "/Temp/dnet-phish-plan.txt";
 const DB_FILE = "darknet-passwords.txt";
-const VERSION = "1.2.0";
+const VERSION = "1.2.1";
 const CRAWL_ID = "crawler-bound-test";
 const GRAPH = {
     darkweb: ["alpha", "beta"],
@@ -89,14 +89,16 @@ function createNs(host, pid, args) {
             return copiedAll;
         },
         ps(target = host) {
-            return Array.from(processesFor(String(target)).values()).map(
-                (process) => ({
-                    filename: process.filename,
-                    pid: process.pid,
-                    threads: process.threads,
-                    args: process.args.slice(),
-                })
-            );
+            // Simulate the Dark Net condition observed in-game: a parent may not
+            // reliably see a just-started remote child through ps(). Completion
+            // signaling must serialize traversal without depending on remote ps().
+            if (String(target) !== host) return [];
+            return Array.from(processesFor(host).values()).map((process) => ({
+                filename: process.filename,
+                pid: process.pid,
+                threads: process.threads,
+                args: process.args.slice(),
+            }));
         },
         exec(filename, target, threads, ...childArgs) {
             if (filename !== AGENT) return 0;
@@ -237,6 +239,13 @@ if (maxAgentProcesses > 17) {
 if (countAgents() !== 0) {
     throw new Error("one-shot crawler agents did not exit after traversal");
 }
+if (
+    Array.from(filesFor("home").keys()).some((filename) =>
+        filename.startsWith("/Temp/dnet-complete-")
+    )
+) {
+    throw new Error("crawler completion signals accumulated on home");
+}
 
 const reports = Array.from(filesFor("home").entries())
     .filter(([filename]) => filename.startsWith("/Temp/dnet-report-"))
@@ -249,5 +258,5 @@ if (
 }
 
 console.log(
-    `Crawler bound check OK (${reports.length} cyclic-graph hosts visited once; max stack ${maxAgentProcesses}; max concurrent auth ${maxAuthInFlight}).`
+    `Crawler bound check OK (${reports.length} cyclic-graph hosts visited once with remote ps unavailable; max stack ${maxAgentProcesses}; max concurrent auth ${maxAuthInFlight}).`
 );

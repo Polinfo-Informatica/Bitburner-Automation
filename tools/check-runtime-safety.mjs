@@ -60,6 +60,9 @@ if (managerKill < 0 || workerCleanup < 0 || managerKill > workerCleanup) {
 if (!cleanup.includes("const CLEANUP_PASSES = 4;")) {
     fail("cleanup must perform multiple stabilization passes.");
 }
+if (!cleanup.includes('const COMPLETION_PREFIX = "/Temp/dnet-complete-";')) {
+    fail("cleanup does not remove orphaned crawler completion signals.");
+}
 
 for (const required of [
     "const PHISH_HOST_HARD_LIMIT = 4;",
@@ -72,11 +75,37 @@ for (const required of [
     "const MAX_CRAWL_DEPTH = 16;",
     "const MAX_CRAWL_STACK = MAX_CRAWL_DEPTH + 1;",
     "const CRAWL_RESTART_DELAY_MS = 120000;",
-    "await waitForChild(target, childPid);",
+    'const COMPLETION_PREFIX = "/Temp/dnet-complete-";',
+    "const MAX_CHILD_WAIT_MS = 900000;",
+    "const MAX_COMPLETION_SIGNAL_ATTEMPTS = 60;",
+    "return await waitForChild(target, childPid, completionFile);",
+    "await signalParentCompletion();",
+    "await seedDarkweb(reports);",
+    'ns.exec(PHISH_LAUNCHER, host, 1, "manager-plan");',
+    '" descendant stack agent(s) before another crawl."',
     'phase = "complete";',
 ]) {
     if (!manager.includes(required)) {
         fail(`bounded runtime guard is missing ${required}.`);
+    }
+}
+
+const childWaitStart = manager.indexOf("async function waitForChild(");
+const childDeployStart = manager.indexOf("async function deployChild(");
+const childWaitSource = manager.slice(childWaitStart, childDeployStart);
+if (childWaitStart < 0 || childDeployStart < 0) {
+    fail("the generated crawler is missing child completion coordination.");
+}
+if (childWaitSource.includes("ns.ps(target)")) {
+    fail("child completion still relies on unreliable remote ps() polling.");
+}
+for (const required of [
+    'ns.fileExists(completionFile, "home")',
+    "await maybeToggleStasis();",
+    "ensurePhishing();",
+]) {
+    if (!childWaitSource.includes(required)) {
+        fail(`child waiting does not service or verify ${required}.`);
     }
 }
 
@@ -87,6 +116,9 @@ if (manager.includes("const LOOP_INTERVAL")) {
 }
 if (!snapshot.includes("counts.agents > MAX_CRAWL_STACK")) {
     fail("the snapshot does not detect a crawler stack cap violation.");
+}
+if (!snapshot.includes('warnings.push("overlapping crawler generations")')) {
+    fail("the snapshot does not detect overlapping crawler generations.");
 }
 
 if (!updater.includes('"darknet-snapshot.js"')) {

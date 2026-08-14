@@ -11,7 +11,7 @@ export async function main(ns) {
         // Intentionally ignored: this operation is best-effort.
     }
 
-    const VERSION = "1.2.0";
+    const VERSION = "1.2.1";
     const MAX_CRAWL_STACK = 17;
     const DB_FILE = "darknet-passwords.txt";
     const REPORT_PREFIX = "/Temp/dnet-report-";
@@ -73,6 +73,7 @@ export async function main(ns) {
     };
     const hostProcesses = [];
     const agentVersions = {};
+    const activeCrawlIds = new Set();
     const unauthorizedPhishHosts = [];
     const desired =
         plan && Array.isArray(plan.desired) ? plan.desired.slice() : [];
@@ -113,6 +114,10 @@ export async function main(ns) {
                 );
                 agentVersions[agentVersion] =
                     Number(agentVersions[agentVersion] || 0) + 1;
+                const crawlId = String(
+                    (process.args && process.args[2]) || "unknown"
+                );
+                activeCrawlIds.add(crawlId);
             } else if (process.filename === "/Temp/dnet-phish.js") {
                 counts.phishing++;
                 counts.phishThreads += Number(process.threads || 0);
@@ -154,6 +159,9 @@ export async function main(ns) {
     if (counts.agents > MAX_CRAWL_STACK) {
         warnings.push("crawler stack hard cap exceeded");
     }
+    if (activeCrawlIds.size > 1) {
+        warnings.push("overlapping crawler generations");
+    }
     if (counts.phishing > 4) warnings.push("phishing host hard cap exceeded");
     if (desired.length > 4) warnings.push("phishing plan hard cap exceeded");
     if (unauthorizedPhishHosts.length > 0) {
@@ -177,6 +185,7 @@ export async function main(ns) {
         freshReportCount: freshReports.length,
         processCounts: counts,
         agentVersions: agentVersions,
+        activeCrawlIds: Array.from(activeCrawlIds),
         phishingPlan: plan,
         phishingPlanAgeMs: now - Number((plan && plan.ts) || 0),
         unauthorizedPhishHosts: Array.from(new Set(unauthorizedPhishHosts)),
